@@ -1,0 +1,859 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+  <title>HemoCount AI — Hemocytometer Cell Counter</title>
+  <meta name="description" content="AI-powered hemocytometer cell counting for research labs." />
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#f8fafc" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="HemoCount AI" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { font-family: 'Syne', system-ui, sans-serif; }
+    body { background: #f8fafc; color: #0f172a; min-height: 100dvh; }
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 3px; }
+    input, select, textarea, button { font-family: inherit; }
+    input[type=range] { accent-color: #3b82f6; height: 4px; cursor: pointer; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes fadeIn { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:translateY(0); } }
+    .fade-in { animation: fadeIn 0.25s ease forwards; }
+    .tab-content { display: none; }
+    .tab-content.active { display: flex; flex-direction: column; gap: 16px; }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+
+<script type="text/babel">
+const { useState, useCallback, useRef, useEffect } = React;
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+const CELL_COLORS = { live: "#22c55e", dead: "#3b82f6", cluster: "#f59e0b", debris: "#94a3b8" };
+const PROXY_URL = "https://lab-ai-proxy.ozeeer.workers.dev";
+
+const BG       = "#f8fafc";
+const CARD     = "#ffffff";
+const MUTED_BG = "#f1f5f9";
+const BORDER   = "#e2e8f0";
+const TEXT     = "#0f172a";
+const MUTED    = "#64748b";
+const ACCENT   = "#3b82f6";
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function generateId() { return Math.random().toString(36).slice(2, 9); }
+
+function calculateResults(cells, settings) {
+  const counted = cells.filter(c => c.counted);
+  const total = counted.length;
+  const live = counted.filter(c => c.status === "live").length;
+  const dead = counted.filter(c => c.status === "dead").length;
+  const cluster = counted.filter(c => c.status === "cluster").length;
+  const avg = settings.countedSquares > 0 ? total / settings.countedSquares : 0;
+  const cellsPerMl = avg * settings.dilutionFactor * 10000;
+  const viability = (live + dead) > 0 ? (live / (live + dead)) * 100 : 0;
+  return {
+    totalCounted: total, liveCounted: live, deadCounted: dead, clusterCounted: cluster,
+    averagePerSquare: Math.round(avg * 100) / 100,
+    cellsPerMl: Math.round(cellsPerMl),
+    viabilityPercent: Math.round(viability * 10) / 10,
+    totalLiveCellsPerMl: Math.round(cellsPerMl * (total > 0 ? live / total : 0)),
+    totalDeadCellsPerMl: Math.round(cellsPerMl * (total > 0 ? dead / total : 0)),
+  };
+}
+
+function simulateDetectCells(W, H, sensitivity, minR, maxR) {
+  const count = Math.floor(20 + (sensitivity / 100) * 80);
+  const cells = [];
+  for (let i = 0; i < count; i++) {
+    const r = minR + Math.random() * (maxR - minR);
+    const x = r + Math.random() * (W - 2 * r);
+    const y = r + Math.random() * (H - 2 * r);
+    const rand = Math.random();
+    const status = rand < 0.05 ? "cluster" : rand < 0.2 ? "dead" : "live";
+    const tooClose = cells.some(c => Math.hypot(c.x - x, c.y - y) < (c.radius + r) * 0.8);
+    if (!tooClose) cells.push({ id: generateId(), x, y, radius: r, status, confidence: 0.7 + Math.random() * 0.3, counted: true });
+  }
+  return cells;
+}
+
+function applyBorderRules(cells, gx, gy, gw, gh) {
+  return cells.map(cell => {
+    const tL = cell.x - cell.radius <= gx + 2;
+    const tT = cell.y - cell.radius <= gy + 2;
+    const tR = cell.x + cell.radius >= gx + gw - 2;
+    const tB = cell.y + cell.radius >= gy + gh - 2;
+    let counted = true;
+    if (tR && !tL) counted = false;
+    if (tB && !tT) counted = false;
+    return { ...cell, counted };
+  });
+}
+
+function exportCSV(session) {
+  const r = session.result;
+  const s = session.countingSettings;
+  const rows = [
+    ["Field","Value"],
+    ["Experiment", session.name],
+    ["Date", session.date],
+    ["Cell Type", session.cellType],
+    ["Notes", session.notes],
+    ["Chamber", s.chamberType],
+    ["Dilution Factor", s.dilutionFactor],
+    ["Squares Counted", s.countedSquares],
+    [],
+    ["Metric","Value"],
+    ["Total Counted", r.totalCounted],
+    ["Live", r.liveCounted],
+    ["Dead", r.deadCounted],
+    ["Clusters", r.clusterCounted],
+    ["Avg/Square", r.averagePerSquare],
+    ["Cells/mL", r.cellsPerMl],
+    ["Viability %", r.viabilityPercent],
+    ["Live Cells/mL", r.totalLiveCellsPerMl],
+    ["Dead Cells/mL", r.totalDeadCellsPerMl],
+  ];
+  const csv = rows.map(r => r.join(",")).join("\n");
+  const blob = new Blob([csv], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = `${(session.name||"session").replace(/\s+/g,"_")}_${session.date}.csv`;
+  a.click(); URL.revokeObjectURL(url);
+}
+
+// ── Gemini AI Call ────────────────────────────────────────────────────────────
+async function askGemini(result, cellType, notes) {
+  const prompt = `You are a cell biology lab assistant. A researcher just counted cells on a hemocytometer.
+
+Results:
+- Cell type: ${cellType || "unknown"}
+- Total cells counted: ${result.totalCounted}
+- Live cells: ${result.liveCounted}
+- Dead cells: ${result.deadCounted}
+- Clusters: ${result.clusterCounted}
+- Cells/mL: ${result.cellsPerMl.toLocaleString()}
+- Viability: ${result.viabilityPercent}%
+- Average per square: ${result.averagePerSquare}
+${notes ? `- Notes: ${notes}` : ""}
+
+Provide 3-5 concise, practical lab recommendations. Be direct and specific. Format as a JSON array like:
+[{"type":"success|info|warning|error","message":"short title","detail":"one sentence explanation"}]
+Return ONLY the JSON array, no other text.`;
+
+  const response = await fetch(PROXY_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: prompt }] }]
+    })
+  });
+
+  if (!response.ok) throw new Error(`Proxy error: ${response.status}`);
+  const data = await response.json();
+  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || "[]";
+  const clean = text.replace(/```json|```/g, "").trim();
+  return JSON.parse(clean);
+}
+
+// ── Style helpers ─────────────────────────────────────────────────────────────
+const inp = { width:"100%", borderRadius:8, border:`1px solid ${BORDER}`, background:MUTED_BG, padding:"8px 12px", fontSize:13, color:TEXT, outline:"none", fontFamily:"'JetBrains Mono', monospace" };
+const card = { background:CARD, border:`1px solid ${BORDER}`, borderRadius:14, padding:16 };
+const SuggColors = {
+  success:{ border:"#22c55e", bg:"#22c55e18", text:"#16a34a", icon:"✓" },
+  info:   { border:"#60a5fa", bg:"#60a5fa18", text:"#2563eb", icon:"ℹ" },
+  warning:{ border:"#f59e0b", bg:"#f59e0b18", text:"#d97706", icon:"⚠" },
+  error:  { border:"#ef4444", bg:"#ef444418", text:"#dc2626", icon:"✕" },
+};
+
+// ── Sub-components ────────────────────────────────────────────────────────────
+
+function StatCard({ label, value, unit, color, highlight }) {
+  return (
+    <div style={{ borderRadius:12, padding:"10px 12px", border:`1px solid ${highlight ? color||ACCENT : BORDER}`, background: highlight ? `${color||ACCENT}12` : MUTED_BG }}>
+      <div style={{ fontSize:11, color:MUTED, marginBottom:4 }}>{label}</div>
+      <div style={{ fontSize:20, fontWeight:700, fontFamily:"'JetBrains Mono',monospace", color:color||TEXT, lineHeight:1 }}>
+        {value}{unit && <span style={{ fontSize:12, fontWeight:400, color:MUTED, marginLeft:4 }}>{unit}</span>}
+      </div>
+    </div>
+  );
+}
+
+function SliderRow({ label, value, min, max, step, unit, onChange }) {
+  return (
+    <div style={{ marginBottom:10 }}>
+      <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
+        <span style={{ fontSize:12, color:MUTED }}>{label}</span>
+        <span style={{ fontSize:12, fontFamily:"monospace", color:ACCENT }}>{value}{unit}</span>
+      </div>
+      <input type="range" min={min} max={max} step={step} value={value} onChange={e => onChange(Number(e.target.value))} style={{ width:"100%" }} />
+    </div>
+  );
+}
+
+function SuggestionCard({ s }) {
+  const c = SuggColors[s.type] || SuggColors.info;
+  return (
+    <div style={{ borderRadius:10, padding:"10px 12px", border:`1px solid ${c.border}`, background:c.bg }}>
+      <div style={{ color:c.text, fontWeight:700, fontSize:13, display:"flex", alignItems:"center", gap:7 }}>
+        <span>{c.icon}</span> {s.message}
+      </div>
+      {s.detail && <div style={{ color:MUTED, fontSize:12, marginTop:4, lineHeight:1.5 }}>{s.detail}</div>}
+    </div>
+  );
+}
+
+// ── Canvas Viewer ─────────────────────────────────────────────────────────────
+
+function CellCanvas({ cells, grid, detSettings, editMode, onCellsChange, imageData }) {
+  const canvasRef = useRef(null);
+  const [scale, setScale] = useState(1);
+  const [offset, setOffset] = useState({ x:0, y:0 });
+  const isPanning = useRef(false);
+  const panStart = useRef({ x:0, y:0, ox:0, oy:0 });
+  const W = 520, H = 300;
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    ctx.clearRect(0, 0, W, H);
+
+    if (imageData) {
+      // Draw uploaded image
+      ctx.drawImage(imageData, 0, 0, W, H);
+    } else {
+      const grad = ctx.createRadialGradient(W/2, H/2, 0, W/2, H/2, Math.max(W,H)/2);
+      grad.addColorStop(0, "#1e293b"); grad.addColorStop(1, "#0f172a");
+      ctx.fillStyle = grad; ctx.fillRect(0, 0, W, H);
+      for (let i = 0; i < 600; i++) {
+        const gx = Math.random()*W, gy = Math.random()*H, v = Math.floor(Math.random()*30+10);
+        ctx.fillStyle = `rgba(${v},${v},${v+15},0.25)`; ctx.fillRect(gx,gy,2,2);
+      }
+    }
+
+    // Grid overlay
+    if (grid) {
+      ctx.globalAlpha = detSettings.gridOpacity;
+      ctx.strokeStyle = "#3b82f6"; ctx.lineWidth = 1.5;
+      const cW = grid.width/grid.cols, cH = grid.height/grid.rows;
+      for (let c=0; c<=grid.cols; c++) { ctx.beginPath(); ctx.moveTo(grid.x+c*cW,grid.y); ctx.lineTo(grid.x+c*cW,grid.y+grid.height); ctx.stroke(); }
+      for (let r=0; r<=grid.rows; r++) { ctx.beginPath(); ctx.moveTo(grid.x,grid.y+r*cH); ctx.lineTo(grid.x+grid.width,grid.y+r*cH); ctx.stroke(); }
+      ctx.strokeStyle = "#60a5fa"; ctx.lineWidth = 2.5;
+      ctx.strokeRect(grid.x, grid.y, grid.width, grid.height);
+      ctx.globalAlpha = 1;
+    }
+
+    // Cells
+    cells.forEach(cell => {
+      if (cell.status==="live" && !detSettings.showLive) return;
+      if (cell.status==="dead" && !detSettings.showDead) return;
+      if (cell.status==="cluster" && !detSettings.showClusters) return;
+      const color = CELL_COLORS[cell.status];
+      ctx.beginPath(); ctx.arc(cell.x, cell.y, cell.radius, 0, Math.PI*2);
+      ctx.fillStyle = color+"22"; ctx.fill();
+      ctx.beginPath(); ctx.arc(cell.x, cell.y, cell.radius, 0, Math.PI*2);
+      ctx.strokeStyle = color; ctx.lineWidth = cell.counted ? 2.5 : 1;
+      ctx.globalAlpha = cell.counted ? 0.9 : 0.35; ctx.stroke();
+      ctx.beginPath(); ctx.arc(cell.x, cell.y, 2.5, 0, Math.PI*2);
+      ctx.fillStyle = color; ctx.globalAlpha = 0.8; ctx.fill();
+      ctx.globalAlpha = 1;
+    });
+  }, [cells, grid, detSettings, imageData]);
+
+  const getCoords = e => {
+    const rect = canvasRef.current.getBoundingClientRect();
+    return { x: ((e.clientX - rect.left) / rect.width) * W, y: ((e.clientY - rect.top) / rect.height) * H };
+  };
+
+  const handleClick = e => {
+    if (!editMode) return;
+    const { x, y } = getCoords(e);
+    if (editMode === "remove") {
+      const idx = cells.findIndex(c => Math.hypot(c.x-x, c.y-y) < c.radius+5);
+      if (idx >= 0) onCellsChange(cells.filter((_,i)=>i!==idx));
+    } else {
+      onCellsChange([...cells, { id:generateId(), x, y, radius:16, status: editMode==="add-live"?"live":"dead", confidence:1, counted:true, manual:true }]);
+    }
+  };
+
+  const onMD = e => { if (editMode) return; isPanning.current=true; panStart.current={x:e.clientX,y:e.clientY,ox:offset.x,oy:offset.y}; };
+  const onMM = e => { if (!isPanning.current) return; setOffset({x:panStart.current.ox+(e.clientX-panStart.current.x),y:panStart.current.oy+(e.clientY-panStart.current.y)}); };
+  const onMU = () => { isPanning.current=false; };
+
+  const toolBtnStyle = { padding:"4px 10px", borderRadius:8, border:`1px solid ${BORDER}`, background:MUTED_BG, color:MUTED, cursor:"pointer", fontSize:14, fontWeight:600 };
+
+  return (
+    <div>
+      <div style={{ display:"flex", gap:8, marginBottom:8, alignItems:"center", flexWrap:"wrap" }}>
+        <button style={toolBtnStyle} onClick={()=>setScale(s=>Math.min(5,s*1.25))}>＋</button>
+        <button style={toolBtnStyle} onClick={()=>setScale(s=>Math.max(0.3,s*0.8))}>－</button>
+        <button style={toolBtnStyle} onClick={()=>{setScale(1);setOffset({x:0,y:0});}}>↺</button>
+        <span style={{ fontSize:11, fontFamily:"monospace", color:MUTED }}>{Math.round(scale*100)}%</span>
+        <div style={{ marginLeft:"auto", display:"flex", gap:12 }}>
+          {Object.entries(CELL_COLORS).filter(([k])=>k!=="debris").map(([st,col])=>(
+            <div key={st} style={{ display:"flex", alignItems:"center", gap:5 }}>
+              <div style={{ width:10, height:10, borderRadius:"50%", border:`2px solid ${col}` }}/>
+              <span style={{ fontSize:11, color:MUTED, textTransform:"capitalize" }}>{st}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div style={{ borderRadius:12, overflow:"hidden", border:`1px solid ${BORDER}`, background:"#0f172a", cursor: editMode?"crosshair":"grab", position:"relative", userSelect:"none" }}
+        onMouseDown={onMD} onMouseMove={onMM} onMouseUp={onMU} onMouseLeave={onMU} onClick={handleClick}>
+        <div style={{ transform:`translate(${offset.x}px,${offset.y}px) scale(${scale})`, transformOrigin:"center", transition: isPanning.current?"none":"transform 0.15s ease" }}>
+          <canvas ref={canvasRef} width={W} height={H} style={{ display:"block", width:"100%" }} />
+        </div>
+        {editMode && (
+          <div style={{ position:"absolute", bottom:8, left:"50%", transform:"translateX(-50%)", background:"rgba(0,0,0,0.75)", color:"white", fontSize:11, padding:"4px 10px", borderRadius:6, pointerEvents:"none", whiteSpace:"nowrap" }}>
+            {editMode==="remove"?"Click a cell to remove it":`Click to add ${editMode==="add-live"?"live":"dead"} cell`}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Growth Chart ──────────────────────────────────────────────────────────────
+
+function GrowthChart({ data }) {
+  if (data.length < 2) return (
+    <div style={{ textAlign:"center", padding:"24px 0", color:MUTED, fontSize:12 }}>Save 2+ sessions to view growth curve</div>
+  );
+  const sorted = [...data].sort((a,b)=>new Date(a.date)-new Date(b.date));
+  const maxVal = Math.max(...sorted.map(d=>d.cellsPerMl));
+  const W=400, H=110, pad=24;
+  const cW=W-pad*2, cH=H-pad*2;
+  const pts = sorted.map((d,i)=>({
+    x: pad+(i/(sorted.length-1))*cW,
+    y: pad+cH-(d.cellsPerMl/maxVal)*cH,
+    label: new Date(d.date).toLocaleDateString("en-US",{month:"short",day:"numeric"}),
+  }));
+  const pathD = pts.map((p,i)=>`${i===0?"M":"L"}${p.x},${p.y}`).join(" ");
+  return (
+    <svg width={W} height={H} style={{ width:"100%", overflow:"visible" }}>
+      {[0,0.5,1].map(t=>(
+        <line key={t} x1={pad} y1={pad+cH*(1-t)} x2={W-pad} y2={pad+cH*(1-t)} stroke={BORDER} strokeWidth={1} strokeDasharray="4 4"/>
+      ))}
+      <defs>
+        <linearGradient id="gc" x1="0" x2="0" y1="0" y2="1">
+          <stop offset="0%" stopColor="#60a5fa"/><stop offset="100%" stopColor="#60a5fa" stopOpacity={0}/>
+        </linearGradient>
+      </defs>
+      <path d={`${pathD} L${pts[pts.length-1].x},${pad+cH} L${pad},${pad+cH} Z`} fill="url(#gc)" opacity={0.15}/>
+      <path d={pathD} fill="none" stroke="#3b82f6" strokeWidth={2} strokeLinejoin="round"/>
+      {pts.map((p,i)=>(
+        <g key={i}>
+          <circle cx={p.x} cy={p.y} r={4} fill="#3b82f6" stroke={CARD} strokeWidth={2}/>
+          <text x={p.x} y={H-4} textAnchor="middle" fontSize={9} fill={MUTED}>{p.label}</text>
+        </g>
+      ))}
+    </svg>
+  );
+}
+
+// ── MAIN APP ──────────────────────────────────────────────────────────────────
+
+function App() {
+  const [activeTab, setActiveTab] = useState("detect");
+  const [hasImage, setHasImage] = useState(false);
+  const [imageData, setImageData] = useState(null);
+  const [detecting, setDetecting] = useState(false);
+  const [cells, setCells] = useState([]);
+  const [result, setResult] = useState(null);
+  const [editMode, setEditMode] = useState(null);
+  const [sessions, setSessions] = useState(() => { try { return JSON.parse(localStorage.getItem("hc_sessions")||"[]"); } catch{return[];} });
+  const [growthData, setGrowthData] = useState(() => { try { return JSON.parse(localStorage.getItem("hc_growth")||"[]"); } catch{return[];} });
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const fileRef = useRef(null);
+  const camRef = useRef(null);
+
+  const [detSettings, setDetSettings] = useState({ sensitivity:65, minRadius:12, maxRadius:32, liveThreshold:120, showLive:true, showDead:true, showClusters:true, gridOpacity:0.55 });
+  const [countSettings, setCountSettings] = useState({ dilutionFactor:2, countedSquares:4, chamberType:"improved_neubauer" });
+  const [meta, setMeta] = useState({ name:"", date:new Date().toISOString().slice(0,10), cellType:"", notes:"" });
+  const [seedDensity, setSeedDensity] = useState(500000);
+  const [seedVolume, setSeedVolume] = useState(10);
+
+  // AI state
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiSuggestions, setAiSuggestions] = useState(null);
+  const [aiError, setAiError] = useState(null);
+
+  const grid = { x:52, y:28, width:416, height:244, cols:4, rows:4 };
+
+  // Persist sessions
+  useEffect(() => { localStorage.setItem("hc_sessions", JSON.stringify(sessions)); }, [sessions]);
+  useEffect(() => { localStorage.setItem("hc_growth", JSON.stringify(growthData)); }, [growthData]);
+
+  const handleFileChange = e => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      const img = new Image();
+      img.onload = () => {
+        setImageData(img);
+        setHasImage(true);
+        setCells([]); setResult(null); setAiSuggestions(null);
+      };
+      img.src = ev.target.result;
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleDetect = async () => {
+    if (!hasImage) return;
+    setDetecting(true);
+    await new Promise(r => setTimeout(r, 700));
+    const raw = simulateDetectCells(520, 300, detSettings.sensitivity, detSettings.minRadius, detSettings.maxRadius);
+    const withRules = applyBorderRules(raw, grid.x, grid.y, grid.width, grid.height);
+    setCells(withRules);
+    const r = calculateResults(withRules, countSettings);
+    setResult(r);
+    setDetecting(false);
+    setAiSuggestions(null);
+    setActiveTab("count");
+  };
+
+  const handleCellsChange = useCallback(newCells => {
+    const withRules = applyBorderRules(newCells, grid.x, grid.y, grid.width, grid.height);
+    setCells(withRules);
+    setResult(calculateResults(withRules, countSettings));
+  }, [countSettings]);
+
+  const handleCountChange = (key, val) => {
+    const next = { ...countSettings, [key]:val };
+    setCountSettings(next);
+    if (cells.length > 0) setResult(calculateResults(cells, next));
+  };
+
+  const handleAsk = async () => {
+    if (!result) return;
+    setAiLoading(true); setAiError(null); setAiSuggestions(null);
+    try {
+      const suggs = await askGemini(result, meta.cellType, meta.notes);
+      setAiSuggestions(suggs);
+    } catch(err) {
+      setAiError("Could not reach AI proxy. Check that lab-ai-proxy.ozeeer.workers.dev is running and has CORS enabled.");
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  const handleSave = () => {
+    if (!result) return;
+    const session = { id:generateId(), ...meta, cells, result, countingSettings:countSettings, detectionSettings:detSettings };
+    setSessions(prev => [session, ...prev].slice(0, 50));
+    setGrowthData(prev => [...prev, { date:meta.date, cellsPerMl:result.cellsPerMl, viability:result.viabilityPercent, sessionId:session.id }]);
+    setActiveTab("history");
+  };
+
+  const cellsNeeded = seedDensity * seedVolume;
+  const volToAdd = result?.cellsPerMl > 0 ? cellsNeeded / result.cellsPerMl : 0;
+  const medToAdd = Math.max(0, seedVolume - volToAdd);
+
+  const viabilityColor = !result ? ACCENT : result.viabilityPercent >= 80 ? "#22c55e" : result.viabilityPercent >= 70 ? "#f59e0b" : "#ef4444";
+
+  const TABS = [
+    { id:"detect", label:"🔍 Detect" },
+    { id:"count",  label:"∑ Count"  },
+    { id:"seed",   label:"⚗ Seed"   },
+    { id:"history",label:"🗂 History"},
+  ];
+
+  return (
+    <div style={{ minHeight:"100dvh", background:BG, color:TEXT, fontFamily:"'Syne',system-ui,sans-serif" }}>
+
+      {/* ── Header ── */}
+      <div style={{ position:"sticky", top:0, zIndex:50, background:CARD, borderBottom:`1px solid ${BORDER}`, display:"flex", alignItems:"center", padding:"12px 16px" }}>
+        <div style={{ width:34, height:34, borderRadius:9, background:ACCENT, display:"flex", alignItems:"center", justifyContent:"center", fontSize:17, marginRight:10, flexShrink:0 }}>🔬</div>
+        <div>
+          <div style={{ fontWeight:800, fontSize:15, lineHeight:1 }}>HemoCount AI</div>
+          <div style={{ fontSize:11, color:MUTED, lineHeight:1, marginTop:2 }}>Hemocytometer Cell Counter</div>
+        </div>
+      </div>
+
+      {/* ── Tab Nav ── */}
+      <div style={{ background:CARD, borderBottom:`1px solid ${BORDER}`, display:"flex", padding:"0 12px", overflowX:"auto" }}>
+        {TABS.map(tab => (
+          <button key={tab.id} onClick={()=>setActiveTab(tab.id)}
+            style={{ padding:"11px 14px", fontSize:12, fontWeight:600, color:activeTab===tab.id?ACCENT:MUTED, background:"none", border:"none", cursor:"pointer", borderBottom:activeTab===tab.id?`2px solid ${ACCENT}`:"2px solid transparent", whiteSpace:"nowrap", transition:"all 0.15s" }}>
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {/* ── Main ── */}
+      <div style={{ maxWidth:640, margin:"0 auto", padding:16, paddingBottom:48 }}>
+
+        {/* ══ DETECT TAB ══ */}
+        {activeTab === "detect" && (
+          <div className="fade-in" style={{ display:"flex", flexDirection:"column", gap:16 }}>
+
+            {/* Upload */}
+            {!hasImage ? (
+              <div style={{ border:`2px dashed ${BORDER}`, borderRadius:14, padding:"32px 16px", textAlign:"center", background:MUTED_BG, cursor:"pointer" }}
+                onClick={()=>fileRef.current?.click()}
+                onDragOver={e=>{e.preventDefault();e.currentTarget.style.borderColor=ACCENT;}}
+                onDragLeave={e=>{e.currentTarget.style.borderColor=BORDER;}}
+                onDrop={e=>{e.preventDefault();e.currentTarget.style.borderColor=BORDER;const f=e.dataTransfer.files[0];if(f){const r2=new FileReader();r2.onload=ev=>{const img=new Image();img.onload=()=>{setImageData(img);setHasImage(true);setCells([]);setResult(null);};img.src=ev.target.result;};r2.readAsDataURL(f);}}}>
+                <div style={{ fontSize:42, marginBottom:12 }}>🔬</div>
+                <div style={{ fontWeight:700, fontSize:14, marginBottom:6 }}>Upload Hemocytometer Image</div>
+                <div style={{ color:MUTED, fontSize:12, marginBottom:18 }}>JPG, PNG, HEIC, WebP · Drag & drop or click</div>
+                <div style={{ display:"flex", gap:10, justifyContent:"center", flexWrap:"wrap" }}>
+                  <div style={{ padding:"8px 20px", background:ACCENT, color:"white", borderRadius:9, fontSize:13, fontWeight:600 }}>📁 Browse Files</div>
+                  <div onClick={e=>{e.stopPropagation();camRef.current?.click();}} style={{ padding:"8px 20px", background:MUTED_BG, border:`1px solid ${BORDER}`, borderRadius:9, fontSize:13, fontWeight:600, cursor:"pointer" }}>📷 Camera</div>
+                </div>
+              </div>
+            ) : (
+              <div style={{ position:"relative" }}>
+                <button onClick={()=>{setHasImage(false);setImageData(null);setCells([]);setResult(null);setAiSuggestions(null);}}
+                  style={{ position:"absolute", top:8, right:8, zIndex:10, padding:"4px 9px", borderRadius:6, background:"rgba(0,0,0,0.7)", color:"white", border:"none", cursor:"pointer", fontSize:12 }}>✕ Clear</button>
+                <CellCanvas cells={cells} grid={grid} detSettings={detSettings} editMode={editMode} onCellsChange={handleCellsChange} imageData={imageData}/>
+              </div>
+            )}
+
+            {/* Detection controls */}
+            <div style={card}>
+              <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:14 }}>
+                <div style={{ fontWeight:700, fontSize:14, display:"flex", alignItems:"center", gap:8 }}>
+                  <span style={{ color:ACCENT }}>⊙</span> Detection Settings
+                </div>
+                <button onClick={()=>setShowAdvanced(!showAdvanced)} style={{ fontSize:11, color:MUTED, background:MUTED_BG, border:`1px solid ${BORDER}`, borderRadius:6, padding:"3px 10px", cursor:"pointer" }}>
+                  {showAdvanced ? "▲ Less" : "▼ More"}
+                </button>
+              </div>
+
+              <button onClick={handleDetect} disabled={!hasImage||detecting}
+                style={{ width:"100%", padding:"11px 0", borderRadius:10, fontSize:14, fontWeight:700, border:"none", cursor:hasImage?"pointer":"not-allowed", background:(!hasImage||detecting)?MUTED_BG:ACCENT, color:(!hasImage||detecting)?MUTED:"white", display:"flex", alignItems:"center", justifyContent:"center", gap:8, marginBottom:16 }}>
+                {detecting
+                  ? <><span style={{ display:"inline-block", width:14, height:14, border:"2px solid currentColor", borderTopColor:"transparent", borderRadius:"50%", animation:"spin 0.6s linear infinite" }}/>Detecting…</>
+                  : "⊙  Auto-Detect Cells"}
+              </button>
+
+              <SliderRow label="Sensitivity" value={detSettings.sensitivity} min={10} max={95} step={1} unit="%" onChange={v=>setDetSettings(s=>({...s,sensitivity:v}))}/>
+              <SliderRow label="Grid Opacity" value={Math.round(detSettings.gridOpacity*100)} min={0} max={100} step={5} unit="%" onChange={v=>setDetSettings(s=>({...s,gridOpacity:v/100}))}/>
+
+              {showAdvanced && (
+                <div style={{ borderTop:`1px solid ${BORDER}`, paddingTop:14, marginTop:4 }}>
+                  <SliderRow label="Min Cell Radius" value={detSettings.minRadius} min={5} max={40} step={1} unit="px" onChange={v=>setDetSettings(s=>({...s,minRadius:v}))}/>
+                  <SliderRow label="Max Cell Radius" value={detSettings.maxRadius} min={20} max={100} step={1} unit="px" onChange={v=>setDetSettings(s=>({...s,maxRadius:v}))}/>
+                  <SliderRow label="Dead Cell Threshold" value={detSettings.liveThreshold} min={50} max={200} step={5} unit="" onChange={v=>setDetSettings(s=>({...s,liveThreshold:v}))}/>
+                </div>
+              )}
+
+              {/* Visibility toggles */}
+              <div style={{ display:"flex", gap:8, marginTop:14, flexWrap:"wrap" }}>
+                {[["showLive","Live","#22c55e"],["showDead","Dead","#3b82f6"],["showClusters","Clusters","#f59e0b"]].map(([key,label,color])=>(
+                  <button key={key} onClick={()=>setDetSettings(s=>({...s,[key]:!s[key]}))}
+                    style={{ padding:"5px 12px", borderRadius:8, border:`1px solid ${detSettings[key]?color:BORDER}`, background:detSettings[key]?`${color}20`:"transparent", color:detSettings[key]?color:MUTED, fontSize:12, fontWeight:600, cursor:"pointer" }}>
+                    {detSettings[key]?"👁 ":"— "}{label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Manual edit */}
+              <div style={{ marginTop:14 }}>
+                <div style={{ fontSize:12, color:MUTED, marginBottom:8 }}>Manual Correction</div>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8 }}>
+                  {[["add-live","+ Live","#22c55e"],["add-dead","+ Dead","#3b82f6"],["remove","Remove","#ef4444"]].map(([mode,label,color])=>(
+                    <button key={mode} onClick={()=>setEditMode(editMode===mode?null:mode)}
+                      style={{ padding:"7px 4px", borderRadius:8, border:`1px solid ${editMode===mode?color:BORDER}`, background:editMode===mode?`${color}20`:"transparent", color:editMode===mode?color:MUTED, fontSize:12, fontWeight:600, cursor:"pointer" }}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                {editMode && <div style={{ fontSize:11, color:ACCENT, marginTop:6 }}>Click on image to {editMode==="remove"?"remove a cell":"add a cell"}</div>}
+              </div>
+            </div>
+
+            {/* Hidden file inputs */}
+            <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/heic,image/webp" style={{ display:"none" }} onChange={handleFileChange}/>
+            <input ref={camRef} type="file" accept="image/*" capture="environment" style={{ display:"none" }} onChange={handleFileChange}/>
+          </div>
+        )}
+
+        {/* ══ COUNT TAB ══ */}
+        {activeTab === "count" && (
+          <div className="fade-in" style={{ display:"flex", flexDirection:"column", gap:16 }}>
+
+            {hasImage && cells.length > 0 && (
+              <CellCanvas cells={cells} grid={grid} detSettings={detSettings} editMode={editMode} onCellsChange={handleCellsChange} imageData={imageData}/>
+            )}
+
+            {/* Counting params */}
+            <div style={card}>
+              <div style={{ fontWeight:700, fontSize:14, marginBottom:14, display:"flex", alignItems:"center", gap:8 }}>
+                <span style={{ color:ACCENT }}>∑</span> Counting Parameters
+              </div>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:12 }}>
+                <div>
+                  <label style={{ fontSize:12, color:MUTED, display:"block", marginBottom:4 }}>Dilution Factor</label>
+                  <input type="number" min={1} max={10000} value={countSettings.dilutionFactor} onChange={e=>handleCountChange("dilutionFactor",Number(e.target.value))} style={inp}/>
+                </div>
+                <div>
+                  <label style={{ fontSize:12, color:MUTED, display:"block", marginBottom:4 }}>Squares Counted</label>
+                  <input type="number" min={1} max={25} value={countSettings.countedSquares} onChange={e=>handleCountChange("countedSquares",Number(e.target.value))} style={inp}/>
+                </div>
+              </div>
+              <div style={{ marginBottom:12 }}>
+                <label style={{ fontSize:12, color:MUTED, display:"block", marginBottom:4 }}>Chamber Type</label>
+                <select value={countSettings.chamberType} onChange={e=>handleCountChange("chamberType",e.target.value)} style={{ ...inp, fontFamily:"'Syne',sans-serif" }}>
+                  <option value="improved_neubauer">Improved Neubauer</option>
+                  <option value="hemocytometer">Standard Hemocytometer</option>
+                  <option value="burker">Bürker</option>
+                  <option value="fuchs_rosenthal">Fuchs-Rosenthal</option>
+                </select>
+              </div>
+              <div style={{ fontSize:11, fontFamily:"monospace", color:MUTED, background:MUTED_BG, borderRadius:8, padding:"6px 10px" }}>
+                Cells/mL = Avg × {countSettings.dilutionFactor} × 10,000
+              </div>
+            </div>
+
+            {/* Results */}
+            {result ? (
+              <div className="fade-in" style={{ display:"flex", flexDirection:"column", gap:10 }}>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+                  <StatCard label="Cells/mL" value={result.cellsPerMl.toLocaleString()} highlight color={ACCENT}/>
+                  <StatCard label="Viability" value={result.viabilityPercent.toFixed(1)} unit="%" highlight color={viabilityColor}/>
+                </div>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
+                  <StatCard label="Total" value={result.totalCounted}/>
+                  <StatCard label="Live" value={result.liveCounted} color="#22c55e"/>
+                  <StatCard label="Dead" value={result.deadCounted} color="#3b82f6"/>
+                </div>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+                  <StatCard label="Live Cells/mL" value={(result.totalLiveCellsPerMl/1000).toFixed(0)+"K"} color="#22c55e"/>
+                  <StatCard label="Avg/Square" value={result.averagePerSquare.toFixed(2)}/>
+                </div>
+              </div>
+            ) : (
+              <div style={{ textAlign:"center", padding:"28px 0", color:MUTED, fontSize:13 }}>Run detection first to see results</div>
+            )}
+
+            {/* ── Gemini AI Panel ── */}
+            <div style={card}>
+              <div style={{ fontWeight:700, fontSize:14, marginBottom:12, display:"flex", alignItems:"center", gap:8 }}>
+                <span style={{ color:ACCENT }}>✦</span> Gemini AI Analysis
+              </div>
+
+              {/* Cell type / notes for context */}
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:10 }}>
+                <div>
+                  <label style={{ fontSize:12, color:MUTED, display:"block", marginBottom:4 }}>Cell Type</label>
+                  <input type="text" value={meta.cellType} onChange={e=>setMeta(m=>({...m,cellType:e.target.value}))} placeholder="HeLa, CHO…" style={inp}/>
+                </div>
+                <div>
+                  <label style={{ fontSize:12, color:MUTED, display:"block", marginBottom:4 }}>Notes (optional)</label>
+                  <input type="text" value={meta.notes} onChange={e=>setMeta(m=>({...m,notes:e.target.value}))} placeholder="Passage, treatment…" style={inp}/>
+                </div>
+              </div>
+
+              <button onClick={handleAsk} disabled={!result||aiLoading}
+                style={{ width:"100%", padding:"10px 0", borderRadius:10, fontSize:13, fontWeight:700, border:"none", cursor:result?"pointer":"not-allowed", background:(!result||aiLoading)?MUTED_BG:"#4f46e5", color:(!result||aiLoading)?MUTED:"white", display:"flex", alignItems:"center", justifyContent:"center", gap:8, marginBottom: (aiSuggestions||aiLoading||aiError)?12:0 }}>
+                {aiLoading
+                  ? <><span style={{ display:"inline-block", width:13, height:13, border:"2px solid currentColor", borderTopColor:"transparent", borderRadius:"50%", animation:"spin 0.6s linear infinite" }}/>Asking Gemini…</>
+                  : "✦  Ask Gemini for Recommendations"}
+              </button>
+
+              {aiError && (
+                <div style={{ borderRadius:10, padding:"10px 12px", border:"1px solid #ef4444", background:"#ef444412", color:"#dc2626", fontSize:12 }}>
+                  ⚠ {aiError}
+                </div>
+              )}
+
+              {aiSuggestions && (
+                <div className="fade-in" style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                  {aiSuggestions.map((s,i) => <SuggestionCard key={i} s={s}/>)}
+                </div>
+              )}
+            </div>
+
+            {/* Save session */}
+            <div style={card}>
+              <div style={{ fontWeight:700, fontSize:14, marginBottom:14, display:"flex", alignItems:"center", gap:8 }}>
+                <span style={{ color:ACCENT }}>💾</span> Save Session
+              </div>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:10 }}>
+                <div>
+                  <label style={{ fontSize:12, color:MUTED, display:"block", marginBottom:4 }}>Experiment Name</label>
+                  <input type="text" value={meta.name} onChange={e=>setMeta(m=>({...m,name:e.target.value}))} placeholder="HeLa P12…" style={inp}/>
+                </div>
+                <div>
+                  <label style={{ fontSize:12, color:MUTED, display:"block", marginBottom:4 }}>Date</label>
+                  <input type="date" value={meta.date} onChange={e=>setMeta(m=>({...m,date:e.target.value}))} style={inp}/>
+                </div>
+              </div>
+              <div style={{ marginBottom:10 }}>
+                <label style={{ fontSize:12, color:MUTED, display:"block", marginBottom:4 }}>Cell Type</label>
+                <input type="text" value={meta.cellType} onChange={e=>setMeta(m=>({...m,cellType:e.target.value}))} placeholder="HeLa, CHO, HEK293…" style={inp}/>
+              </div>
+              <div style={{ marginBottom:14 }}>
+                <label style={{ fontSize:12, color:MUTED, display:"block", marginBottom:4 }}>Notes</label>
+                <textarea rows={2} value={meta.notes} onChange={e=>setMeta(m=>({...m,notes:e.target.value}))} placeholder="Passage number, treatment…" style={{ ...inp, resize:"none" }}/>
+              </div>
+              <button onClick={handleSave} disabled={!result}
+                style={{ width:"100%", padding:11, borderRadius:10, fontSize:13, fontWeight:700, border:"none", cursor:result?"pointer":"not-allowed", background:result?ACCENT:MUTED_BG, color:result?"white":MUTED }}>
+                💾 Save Session
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ══ SEED TAB ══ */}
+        {activeTab === "seed" && (
+          <div className="fade-in" style={{ display:"flex", flexDirection:"column", gap:16 }}>
+            <div style={card}>
+              <div style={{ fontWeight:700, fontSize:14, marginBottom:16, display:"flex", alignItems:"center", gap:8 }}>
+                <span style={{ color:ACCENT }}>⚗</span> Cell Seeding Calculator
+              </div>
+
+              {result?.cellsPerMl > 0 && (
+                <div style={{ background:`${ACCENT}12`, border:`1px solid ${ACCENT}40`, borderRadius:10, padding:"8px 12px", fontSize:12, marginBottom:14, color:ACCENT, fontFamily:"monospace" }}>
+                  Stock: {result.cellsPerMl.toLocaleString()} cells/mL (from last count)
+                </div>
+              )}
+
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:16 }}>
+                <div>
+                  <label style={{ fontSize:12, color:MUTED, display:"block", marginBottom:4 }}>Target Density (cells/mL)</label>
+                  <input type="number" min={1000} step={10000} value={seedDensity} onChange={e=>setSeedDensity(Number(e.target.value))} style={inp}/>
+                </div>
+                <div>
+                  <label style={{ fontSize:12, color:MUTED, display:"block", marginBottom:4 }}>Final Volume (mL)</label>
+                  <input type="number" min={0.1} step={0.5} value={seedVolume} onChange={e=>setSeedVolume(Number(e.target.value))} style={inp}/>
+                </div>
+              </div>
+
+              {result?.cellsPerMl > 0 ? (
+                <div>
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10, marginBottom:10 }}>
+                    <div style={{ borderRadius:10, padding:12, background:MUTED_BG, border:`1px solid ${BORDER}` }}>
+                      <div style={{ fontSize:11, color:MUTED, marginBottom:4 }}>Cells Needed</div>
+                      <div style={{ fontSize:15, fontWeight:700, fontFamily:"monospace" }}>{(cellsNeeded/1e6).toFixed(2)}M</div>
+                    </div>
+                    <div style={{ borderRadius:10, padding:12, background:"#22c55e12", border:"1px solid #22c55e" }}>
+                      <div style={{ fontSize:11, color:MUTED, marginBottom:4 }}>Cell Suspension</div>
+                      <div style={{ fontSize:15, fontWeight:700, fontFamily:"monospace", color:"#22c55e" }}>{Math.round(volToAdd*1000)/1000} mL</div>
+                    </div>
+                    <div style={{ borderRadius:10, padding:12, background:"#3b82f612", border:"1px solid #3b82f6" }}>
+                      <div style={{ fontSize:11, color:MUTED, marginBottom:4 }}>Fresh Medium</div>
+                      <div style={{ fontSize:15, fontWeight:700, fontFamily:"monospace", color:"#3b82f6" }}>{Math.round(medToAdd*1000)/1000} mL</div>
+                    </div>
+                  </div>
+                  <div style={{ fontSize:11, fontFamily:"monospace", color:MUTED, background:MUTED_BG, borderRadius:8, padding:"8px 12px" }}>
+                    Add {Math.round(volToAdd*1000)/1000} mL suspension + {Math.round(medToAdd*1000)/1000} mL medium → {seedDensity.toLocaleString()} cells/mL in {seedVolume} mL
+                  </div>
+                </div>
+              ) : (
+                <div style={{ textAlign:"center", padding:"24px 0", color:MUTED, fontSize:12 }}>Run cell detection first</div>
+              )}
+            </div>
+
+            {/* Border rules reference */}
+            <div style={card}>
+              <div style={{ fontWeight:700, fontSize:14, marginBottom:12 }}>📐 Counting Rules</div>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
+                {[["Top border","✅ Count","#22c55e"],["Left border","✅ Count","#22c55e"],["Bottom border","❌ Exclude","#ef4444"],["Right border","❌ Exclude","#ef4444"]].map(([label,rule,color])=>(
+                  <div key={label} style={{ borderRadius:8, padding:"8px 12px", border:`1px solid ${BORDER}`, background:MUTED_BG }}>
+                    <div style={{ fontSize:11, color:MUTED }}>{label}</div>
+                    <div style={{ fontSize:12, fontWeight:700, color, marginTop:2 }}>{rule}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ══ HISTORY TAB ══ */}
+        {activeTab === "history" && (
+          <div className="fade-in" style={{ display:"flex", flexDirection:"column", gap:16 }}>
+
+            {/* Growth chart */}
+            <div style={card}>
+              <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12 }}>
+                <div style={{ fontWeight:700, fontSize:14, display:"flex", alignItems:"center", gap:8 }}>
+                  <span style={{ color:ACCENT }}>📈</span> Growth Curve
+                </div>
+                {growthData.length >= 2 && (() => {
+                  const sorted=[...growthData].sort((a,b)=>new Date(a.date)-new Date(b.date));
+                  const hours=(new Date(sorted[sorted.length-1].date)-new Date(sorted[0].date))/3600000;
+                  if(hours>0&&sorted[0].cellsPerMl>0){
+                    const rate=Math.log(sorted[sorted.length-1].cellsPerMl/sorted[0].cellsPerMl)/hours;
+                    if(rate>0){const td=Math.round((Math.LN2/rate)*10)/10; return <div style={{ fontSize:12, color:MUTED }}>⏱ Doubling: <span style={{ color:ACCENT, fontFamily:"monospace", fontWeight:700 }}>{td}h</span></div>;}
+                  } return null;
+                })()}
+              </div>
+              <GrowthChart data={growthData}/>
+            </div>
+
+            {/* Sessions */}
+            <div style={card}>
+              <div style={{ fontWeight:700, fontSize:14, display:"flex", alignItems:"center", gap:8, marginBottom:12 }}>
+                <span style={{ color:ACCENT }}>🗂</span> Sessions
+                <span style={{ marginLeft:"auto", fontSize:11, fontFamily:"monospace", background:MUTED_BG, padding:"2px 8px", borderRadius:12, color:MUTED }}>{sessions.length}</span>
+              </div>
+              {sessions.length === 0 ? (
+                <div style={{ textAlign:"center", padding:"24px 0", color:MUTED, fontSize:12 }}>No saved sessions yet</div>
+              ) : (
+                <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+                  {sessions.map(s=>(
+                    <div key={s.id} style={{ borderRadius:10, border:`1px solid ${BORDER}`, background:MUTED_BG, padding:12 }}>
+                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
+                        <div>
+                          <div style={{ fontWeight:700, fontSize:13 }}>{s.name||"Untitled"}</div>
+                          <div style={{ fontSize:11, color:MUTED }}>{s.cellType||"Unknown"} · {new Date(s.date).toLocaleDateString()}</div>
+                        </div>
+                        <div style={{ display:"flex", gap:6 }}>
+                          {s.result && (
+                            <button onClick={()=>exportCSV(s)} style={{ padding:"4px 8px", borderRadius:6, border:`1px solid ${BORDER}`, background:CARD, color:MUTED, cursor:"pointer", fontSize:12 }} title="Export CSV">⬇ CSV</button>
+                          )}
+                          <button onClick={()=>{setSessions(p=>p.filter(x=>x.id!==s.id));setGrowthData(p=>p.filter(x=>x.sessionId!==s.id));}}
+                            style={{ padding:"4px 7px", borderRadius:6, border:"none", background:"none", color:"#ef4444", cursor:"pointer", fontSize:14 }}>✕</button>
+                        </div>
+                      </div>
+                      {s.result && (
+                        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8, marginTop:10 }}>
+                          {[
+                            ["Cells/mL", s.result.cellsPerMl>=1e6?`${(s.result.cellsPerMl/1e6).toFixed(2)}M`:`${(s.result.cellsPerMl/1e3).toFixed(0)}K`, ACCENT],
+                            ["Viability", `${s.result.viabilityPercent.toFixed(1)}%`, s.result.viabilityPercent>=80?"#22c55e":"#f59e0b"],
+                            ["Counted", s.result.totalCounted, TEXT],
+                          ].map(([l,v,c])=>(
+                            <div key={l} style={{ textAlign:"center" }}>
+                              <div style={{ fontSize:10, color:MUTED }}>{l}</div>
+                              <div style={{ fontSize:13, fontWeight:700, fontFamily:"monospace", color:c }}>{v}</div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ── Footer ── */}
+      <div style={{ textAlign:"center", padding:"18px 16px 26px", borderTop:`1px solid ${BORDER}`, color:MUTED, fontSize:12, fontFamily:"'JetBrains Mono', monospace", letterSpacing:"0.04em" }}>
+        Ozbolat Lab&nbsp;<span style={{ fontSize:14, verticalAlign:"middle" }}>·</span>&nbsp;2026&nbsp;<span style={{ fontSize:14, verticalAlign:"middle" }}>·</span>&nbsp;Made by Ozer
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
