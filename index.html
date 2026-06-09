@@ -72,19 +72,61 @@ function calculateResults(cells, settings) {
   };
 }
 
-function simulateDetectCells(W, H, sensitivity, minR, maxR) {
-  const count = Math.floor(20 + (sensitivity / 100) * 80);
-  const cells = [];
-  for (let i = 0; i < count; i++) {
-    const r = minR + Math.random() * (maxR - minR);
-    const x = r + Math.random() * (W - 2 * r);
-    const y = r + Math.random() * (H - 2 * r);
-    const rand = Math.random();
-    const status = rand < 0.05 ? "cluster" : rand < 0.2 ? "dead" : "live";
-    const tooClose = cells.some(c => Math.hypot(c.x - x, c.y - y) < (c.radius + r) * 0.8);
-    if (!tooClose) cells.push({ id: generateId(), x, y, radius: r, status, confidence: 0.7 + Math.random() * 0.3, counted: true });
-  }
-  return cells;
+// ── Gemini Vision Cell Detection ─────────────────────────────────────────────
+function imageToBase64(imgEl) {
+  const MAX = 1024;
+  const scale = Math.min(1, MAX / Math.max(imgEl.naturalWidth, imgEl.naturalHeight));
+  const w = Math.round(imgEl.naturalWidth * scale);
+  const h = Math.round(imgEl.naturalHeight * scale);
+  const c = document.createElement("canvas");
+  c.width = w; c.height = h;
+  c.getContext("2d").drawImage(imgEl, 0, 0, w, h);
+  return { base64: c.toDataURL("image/jpeg", 0.85).split(",")[1], w, h };
+}
+
+async function detectCellsWithGemini(imgEl) {
+  const { base64, w, h } = imageToBase64(imgEl);
+
+  const prompt = `You are analyzing a hemocytometer microscopy image for cell counting.
+The image is ${w}x${h} pixels.
+Identify every cell visible. For each cell return x (center x px), y (center y px), r (radius px), status ("live" for bright/transparent cells, "dead" for dark/blue trypan-stained cells, "cluster" for overlapping groups).
+Return ONLY a raw JSON array, no markdown, no explanation. Example:
+[{"x":120,"y":85,"r":18,"status":"live"},{"x":200,"y":150,"r":15,"status":"dead"}]
+Detect ALL visible cells. Typical radius 10-30px.`;
+
+  const response = await fetch(PROXY_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      contents: [{
+        parts: [
+          { inline_data: { mime_type: "image/jpeg", data: base64 } },
+          { text: prompt }
+        ]
+      }]
+    })
+  });
+
+  if (!response.ok) throw new Error(`Proxy error: ${response.status}`);
+  const data = await response.json();
+  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || "[]";
+  const clean = text.replace(/```json|```/g, "").trim();
+  const geminiCells = JSON.parse(clean);
+
+  // Scale Gemini coords (relative to resized image w x h) to canvas 520x300
+  const CANVAS_W = 520, CANVAS_H = 300;
+  const scaleX = CANVAS_W / w;
+  const scaleY = CANVAS_H / h;
+
+  return geminiCells.map(c => ({
+    id: generateId(),
+    x: Math.round(c.x * scaleX),
+    y: Math.round(c.y * scaleY),
+    radius: Math.round((c.r * scaleX + c.r * scaleY) / 2),
+    status: ["live","dead","cluster"].includes(c.status) ? c.status : "live",
+    confidence: 0.9,
+    counted: true,
+  }));
 }
 
 function applyBorderRules(cells, gx, gy, gw, gh) {
@@ -385,6 +427,7 @@ function App() {
   const [seedVolume, setSeedVolume] = useState(10);
 
   // AI state
+  const [detectError, setDetectError] = useState(null);
   const [aiLoading, setAiLoading] = useState(false);
   const [aiSuggestions, setAiSuggestions] = useState(null);
   const [aiError, setAiError] = useState(null);
@@ -412,17 +455,22 @@ function App() {
   };
 
   const handleDetect = async () => {
-    if (!hasImage) return;
+    if (!hasImage || !imageData) return;
     setDetecting(true);
-    await new Promise(r => setTimeout(r, 700));
-    const raw = simulateDetectCells(520, 300, detSettings.sensitivity, detSettings.minRadius, detSettings.maxRadius);
-    const withRules = applyBorderRules(raw, grid.x, grid.y, grid.width, grid.height);
-    setCells(withRules);
-    const r = calculateResults(withRules, countSettings);
-    setResult(r);
-    setDetecting(false);
-    setAiSuggestions(null);
-    setActiveTab("count");
+    setDetectError(null);
+    try {
+      const raw = await detectCellsWithGemini(imageData);
+      const withRules = applyBorderRules(raw, grid.x, grid.y, grid.width, grid.height);
+      setCells(withRules);
+      const r = calculateResults(withRules, countSettings);
+      setResult(r);
+      setAiSuggestions(null);
+      setActiveTab("count");
+    } catch(err) {
+      setDetectError("Gemini detection failed: " + err.message);
+    } finally {
+      setDetecting(false);
+    }
   };
 
   const handleCellsChange = useCallback(newCells => {
@@ -529,28 +577,27 @@ function App() {
                 <div style={{ fontWeight:700, fontSize:14, display:"flex", alignItems:"center", gap:8 }}>
                   <span style={{ color:ACCENT }}>⊙</span> Detection Settings
                 </div>
-                <button onClick={()=>setShowAdvanced(!showAdvanced)} style={{ fontSize:11, color:MUTED, background:MUTED_BG, border:`1px solid ${BORDER}`, borderRadius:6, padding:"3px 10px", cursor:"pointer" }}>
-                  {showAdvanced ? "▲ Less" : "▼ More"}
-                </button>
+
               </div>
 
               <button onClick={handleDetect} disabled={!hasImage||detecting}
                 style={{ width:"100%", padding:"11px 0", borderRadius:10, fontSize:14, fontWeight:700, border:"none", cursor:hasImage?"pointer":"not-allowed", background:(!hasImage||detecting)?MUTED_BG:ACCENT, color:(!hasImage||detecting)?MUTED:"white", display:"flex", alignItems:"center", justifyContent:"center", gap:8, marginBottom:16 }}>
                 {detecting
-                  ? <><span style={{ display:"inline-block", width:14, height:14, border:"2px solid currentColor", borderTopColor:"transparent", borderRadius:"50%", animation:"spin 0.6s linear infinite" }}/>Detecting…</>
-                  : "⊙  Auto-Detect Cells"}
+                  ? <><span style={{ display:"inline-block", width:14, height:14, border:"2px solid currentColor", borderTopColor:"transparent", borderRadius:"50%", animation:"spin 0.6s linear infinite" }}/>Asking Gemini Vision…</>
+                  : "⊙  Detect Cells with Gemini Vision"}
               </button>
 
-              <SliderRow label="Sensitivity" value={detSettings.sensitivity} min={10} max={95} step={1} unit="%" onChange={v=>setDetSettings(s=>({...s,sensitivity:v}))}/>
-              <SliderRow label="Grid Opacity" value={Math.round(detSettings.gridOpacity*100)} min={0} max={100} step={5} unit="%" onChange={v=>setDetSettings(s=>({...s,gridOpacity:v/100}))}/>
-
-              {showAdvanced && (
-                <div style={{ borderTop:`1px solid ${BORDER}`, paddingTop:14, marginTop:4 }}>
-                  <SliderRow label="Min Cell Radius" value={detSettings.minRadius} min={5} max={40} step={1} unit="px" onChange={v=>setDetSettings(s=>({...s,minRadius:v}))}/>
-                  <SliderRow label="Max Cell Radius" value={detSettings.maxRadius} min={20} max={100} step={1} unit="px" onChange={v=>setDetSettings(s=>({...s,maxRadius:v}))}/>
-                  <SliderRow label="Dead Cell Threshold" value={detSettings.liveThreshold} min={50} max={200} step={5} unit="" onChange={v=>setDetSettings(s=>({...s,liveThreshold:v}))}/>
+              {detectError && (
+                <div style={{ borderRadius:10, padding:"10px 12px", border:"1px solid #ef4444", background:"#ef444412", color:"#dc2626", fontSize:12, marginBottom:8 }}>
+                  ⚠ {detectError}
                 </div>
               )}
+
+              <div style={{ fontSize:11, color:MUTED, background:MUTED_BG, borderRadius:8, padding:"7px 10px", marginBottom:10, lineHeight:1.5 }}>
+                ✦ Gemini Vision analyzes the actual image — upload your microscope photo and click detect.
+              </div>
+
+              <SliderRow label="Grid Opacity" value={Math.round(detSettings.gridOpacity*100)} min={0} max={100} step={5} unit="%" onChange={v=>setDetSettings(s=>({...s,gridOpacity:v/100}))}/>
 
               {/* Visibility toggles */}
               <div style={{ display:"flex", gap:8, marginTop:14, flexWrap:"wrap" }}>
