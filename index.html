@@ -40,13 +40,13 @@ sup{font-size:.55em;line-height:0}
 
 .card{background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:20px;box-shadow:var(--shadow);min-width:0}
 
-.drop{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;text-align:center;padding:40px 20px;border:2px dashed var(--line-2);border-radius:18px;background:var(--surface);cursor:pointer;transition:border-color .15s,background .15s}
+.drop{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;text-align:center;padding:40px 20px;border:2px dashed var(--line-2);border-radius:18px;background:var(--surface);transition:border-color .15s,background .15s}
 .drop:hover,.drop.drag{border-color:var(--trypan);background:var(--trypan-soft)}
 .drop h2{font-size:clamp(22px,4vw,30px);font-weight:800;letter-spacing:-.02em}
 .drop p{margin:0;color:var(--ink-2);max-width:46ch}
 .drop.small{padding:16px;flex-direction:row;flex-wrap:wrap;gap:12px}
 .drop.small h2{font-size:17px}
-.drop.small p,.drop.small #btn-demo{display:none}
+.drop.small p{display:none}
 .btn{appearance:none;border:1px solid var(--line-2);background:var(--surface);padding:10px 16px;border-radius:999px;cursor:pointer;font-weight:600;font-size:14px;white-space:nowrap}
 .btn:hover{background:var(--surface-2)}
 .btn.primary{background:var(--ink);color:var(--bg);border-color:var(--ink)}
@@ -108,12 +108,16 @@ details summary{cursor:pointer;font-weight:600;color:var(--ink-2);font-size:14px
     <div><b>OZ Cell Counter</b><span>Hemocytometer photo → cells/mL</span></div>
   </div>
 
-  <label class="drop" id="drop" for="file-in">
+  <div class="drop" id="drop">
     <h2 id="drop-title">Take a photo of the hemocytometer</h2>
-    <p>Point your phone at the eyepiece and shoot the whole grid or one large square. Claude counts the cells. The app finds the grid lines and tells them apart from cells. Counting happens on this device.</p>
-    <span class="row" style="justify-content:center"><span class="btn primary">Take photo</span><button class="btn" id="btn-demo" type="button">Try a demo</button></span>
+    <p>Point your phone at the eyepiece and shoot the whole grid or one large square, or pick photos you already took.</p>
+    <span class="row" style="justify-content:center">
+      <label class="btn primary" for="file-in">Take photo</label>
+      <label class="btn" for="file-gal">From gallery</label>
+    </span>
     <input type="file" id="file-in" accept="image/*" capture="environment" hidden>
-  </label>
+    <input type="file" id="file-gal" accept="image/*" multiple hidden>
+  </div>
 
   <section class="card" id="result-card" hidden>
     <div class="result">
@@ -186,7 +190,7 @@ function readFiles(files){
   const list=[...files].filter(f=>f&&/^image\//.test(f.type));if(!list.length)return toast('Choose image files (JPG or PNG)');
   list.forEach(f=>{const rd=new FileReader();rd.onload=()=>{const im=new Image();im.onload=()=>addImage(im,f.name||'Photo',f);im.onerror=()=>toast('Could not open '+f.name);im.src=rd.result};rd.readAsDataURL(f)});
 }
-$('#file-in').addEventListener('change',e=>{readFiles(e.target.files);e.target.value=''});
+['#file-in','#file-gal'].forEach(id=>$(id).addEventListener('change',e=>{readFiles(e.target.files);e.target.value=''}));
 const drop=$('#drop');
 ['dragenter','dragover'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('drag')}));
 ['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('drag')}));
@@ -333,7 +337,7 @@ function renderPhotos(){
     draw(rec)});
   $('#photos-wrap').hidden=!imgs.length;
   drop.classList.toggle('small',imgs.length>0);
-  $('#drop-title').textContent=imgs.length?`Take another photo (${imgs.length} so far)`:'Take a photo of the hemocytometer';
+  $('#drop-title').textContent=imgs.length?`Add another photo (${imgs.length} so far)`:'Take a photo of the hemocytometer';
 }
 
 let R={};
@@ -367,21 +371,6 @@ $('#btn-copy').addEventListener('click',()=>{
   try{navigator.clipboard.writeText(t).then(()=>{toast('Copied');$('#copy-slot').innerHTML=''},fb)}catch(e){fb()}
 });
 
-/* demo: synthetic hemocytometer squares */
-function demoImage(seed){
-  let s=seed;const r=()=>{s=(s*16807)%2147483647;return s/2147483647};
-  const W=960,H=720,c=document.createElement('canvas');c.width=W;c.height=H;const x=c.getContext('2d');
-  const bg=x.createRadialGradient(W/2,H/2,100,W/2,H/2,W*.7);bg.addColorStop(0,'#e1e5e8');bg.addColorStop(1,'#bfc5cb');x.fillStyle=bg;x.fillRect(0,0,W,H);
-  x.strokeStyle='rgba(90,96,106,.5)';x.lineWidth=1.4;for(let k=30;k<=W;k+=180){x.beginPath();x.moveTo(k,0);x.lineTo(k,H);x.stroke()}for(let k=30;k<=H;k+=180){x.beginPath();x.moveTo(0,k);x.lineTo(W,k);x.stroke()}
-  const placed=[];const place=rad=>{for(let t=0;t<60;t++){const p={x:30+r()*(W-60),y:30+r()*(H-60),r:rad};if(placed.every(o=>Math.hypot(o.x-p.x,o.y-p.y)>o.r+rad+6)){placed.push(p);return p}}return null};
-  const nl=38+Math.floor(r()*10);for(let i=0;i<nl;i++){const rad=8+r()*3.5,p=place(rad);if(!p)continue;const gr=x.createRadialGradient(p.x-2,p.y-2,1,p.x,p.y,rad);gr.addColorStop(0,'#fbfdfd');gr.addColorStop(.75,'#e8eeef');gr.addColorStop(1,'#c7cfd2');x.fillStyle=gr;x.beginPath();x.arc(p.x,p.y,rad,0,7);x.fill();x.strokeStyle='rgb(46,54,62)';x.lineWidth=2.6;x.stroke()}
-  const nd=3+Math.floor(r()*3);for(let i=0;i<nd;i++){const rad=8+r()*2.5,p=place(rad);if(!p)continue;const gr=x.createRadialGradient(p.x-2,p.y-2,1,p.x,p.y,rad);gr.addColorStop(0,'#5b6cc4');gr.addColorStop(1,'#283a96');x.fillStyle=gr;x.beginPath();x.arc(p.x,p.y,rad,0,7);x.fill()}
-  for(let i=0;i<40;i++){x.fillStyle='rgba(60,64,70,.7)';x.beginPath();x.arc(r()*W,r()*H,.8+r()*1.4,0,7);x.fill()}
-  const id=x.getImageData(0,0,W,H),d=id.data;for(let i=0;i<d.length;i+=4){const q=(r()-.5)*14;d[i]+=q;d[i+1]+=q;d[i+2]+=q}x.putImageData(id,0,0);
-  return c;
-}
-$('#btn-demo').addEventListener('click',e=>{e.preventDefault();e.stopPropagation();
-  ['Top-left','Top-right','Bottom-left','Bottom-right'].forEach((nm,i)=>{demoImage(7+i*991).toBlob(b=>{if(!b)return;const im=new Image();im.onload=()=>addImage(im,`Demo · ${nm}`,b);im.src=URL.createObjectURL(b)},'image/jpeg',.9)})});
 })();
 </script>
 
