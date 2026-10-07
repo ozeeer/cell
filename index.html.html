@@ -1,0 +1,388 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>OZ Cell Counter</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one column. Upload, then the answer, then the photos it came from. */
+:root{
+  --bg:#ECEFF3; --surface:#FBFCFD; --surface-2:#F2F4F8; --ink:#11152A; --ink-2:#4F5773; --ink-3:#868DA5;
+  --line:#D7DCE6; --line-2:#C2C9D8;
+  --trypan:#3242C2; --trypan-soft:#E4E7FA; --live:#0B8577; --live-soft:#DCF1ED;
+  --ok:#2B7A3A; --ok-soft:#E1F0E3; --warn:#9F5506; --warn-soft:#FAEED8; --bad:#B42335; --bad-soft:#FAE2E5;
+  --shadow:0 1px 2px rgba(17,21,42,.06),0 10px 28px -16px rgba(17,21,42,.22);
+  --f-display:'Bricolage Grotesque','Segoe UI',system-ui,sans-serif;
+  --f-body:'Instrument Sans',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+  --f-mono:'JetBrains Mono',ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0A0D19; --surface:#121729; --surface-2:#191F35; --ink:#E7EAF6; --ink-2:#A2A9C5; --ink-3:#6C7493;
+  --line:#252C45; --line-2:#343C59; --trypan:#8593FF; --trypan-soft:#21284F; --live:#3CCDB9; --live-soft:#11332E;
+  --ok:#66C978; --ok-soft:#14301A; --warn:#F2A54A; --warn-soft:#382811; --bad:#F2738A; --bad-soft:#3B1720;
+  --shadow:0 1px 2px rgba(0,0,0,.35),0 12px 30px -16px rgba(0,0,0,.7); color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0A0D19; --surface:#121729; --surface-2:#191F35; --ink:#E7EAF6; --ink-2:#A2A9C5; --ink-3:#6C7493;
+  --line:#252C45; --line-2:#343C59; --trypan:#8593FF; --trypan-soft:#21284F; --live:#3CCDB9; --live-soft:#11332E;
+  --ok:#66C978; --ok-soft:#14301A; --warn:#F2A54A; --warn-soft:#382811; --bad:#F2738A; --bad-soft:#3B1720;
+  --shadow:0 1px 2px rgba(0,0,0,.35),0 12px 30px -16px rgba(0,0,0,.7); color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:15px;line-height:1.5}
+.wrap{max-width:860px;margin:0 auto;padding-inline:16px;padding-block:28px 56px;display:flex;flex-direction:column;gap:18px}
+h1,h2,h3{font-family:var(--f-display);margin:0;text-wrap:balance}
+button,input,select{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--trypan);outline-offset:2px}
+sup{font-size:.55em;line-height:0}
+
+.brand{display:flex;align-items:center;gap:10px}
+.brand svg{width:34px;height:34px;flex:none}
+.brand b{font-family:var(--f-display);font-weight:800;font-size:22px;letter-spacing:-.02em}
+.brand span{display:block;font-size:12px;color:var(--ink-3)}
+
+.card{background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:20px;box-shadow:var(--shadow);min-width:0}
+
+.drop{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;text-align:center;padding:40px 20px;border:2px dashed var(--line-2);border-radius:18px;background:var(--surface);cursor:pointer;transition:border-color .15s,background .15s}
+.drop:hover,.drop.drag{border-color:var(--trypan);background:var(--trypan-soft)}
+.drop h2{font-size:clamp(22px,4vw,30px);font-weight:800;letter-spacing:-.02em}
+.drop p{margin:0;color:var(--ink-2);max-width:46ch}
+.drop.small{padding:16px;flex-direction:row;flex-wrap:wrap;gap:12px}
+.drop.small h2{font-size:17px}
+.drop.small p,.drop.small #btn-demo{display:none}
+.btn{appearance:none;border:1px solid var(--line-2);background:var(--surface);padding:10px 16px;border-radius:999px;cursor:pointer;font-weight:600;font-size:14px;white-space:nowrap}
+.btn:hover{background:var(--surface-2)}
+.btn.primary{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.btn.link{border:0;background:none;color:var(--trypan);padding:4px 0;font-size:13px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+
+.settings{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px}
+.field{display:flex;flex-direction:column;gap:5px;min-width:0}
+.field label{font-size:12px;font-weight:600;color:var(--ink-2)}
+.in{width:100%;background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.in:focus{outline:none;border-color:var(--trypan)}
+
+.result{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:20px;align-items:center}
+@media (max-width:640px){.result{grid-template-columns:minmax(0,1fr)}}
+.eyebrow{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);font-weight:600}
+.big{font-family:var(--f-display);font-weight:800;font-size:clamp(42px,8vw,64px);line-height:1.02;letter-spacing:-.03em;font-variant-numeric:tabular-nums}
+.big .x{font-weight:600;color:var(--ink-3);font-size:.62em;margin:0 .1em}
+.big sup{font-size:.45em;vertical-align:super}
+.unit{color:var(--ink-2)}
+.stats{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.stat .v{font-family:var(--f-mono);font-size:20px;font-variant-numeric:tabular-nums}
+.stat .k{font-size:12px;color:var(--ink-3)}
+.stat.live .v{color:var(--live)} .stat.dead .v{color:var(--trypan)}
+.verdict{margin-top:16px;padding:11px 14px;border-radius:12px;font-size:14px}
+.verdict.ok{background:var(--ok-soft);color:var(--ok)} .verdict.warn{background:var(--warn-soft);color:var(--warn)} .verdict.bad{background:var(--bad-soft);color:var(--bad)}
+
+.photos{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px}
+.photo{background:var(--surface);border:1px solid var(--line);border-radius:14px;overflow:hidden;min-width:0}
+.photo canvas{width:100%;height:auto;display:block;cursor:crosshair;background:var(--surface-2)}
+.photo .meta{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:9px 12px;font-size:13px;flex-wrap:wrap}
+.photo .meta .sqsel{padding:7px 10px;font-size:13px}
+.photo .meta .strow{flex-basis:100%;display:flex;gap:10px;align-items:center}
+.st{font-size:12px;font-weight:600;color:var(--ink-3)}
+.st.ai{color:var(--live)} .st.err{color:var(--bad)}
+.st.run{color:var(--trypan);animation:pulse 1.2s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.45}}
+.photo .meta .note{flex-basis:100%;font-size:12px;color:var(--ink-2)}
+.photo.busy canvas{opacity:.55;filter:saturate(.6)}
+.photo .meta b{font-family:var(--f-mono);font-weight:500}
+.photo .l{color:var(--live)} .photo .d{color:var(--trypan)}
+.hint{font-size:13px;color:var(--ink-3)}
+details summary{cursor:pointer;font-weight:600;color:var(--ink-2);font-size:14px}
+.range{width:100%;accent-color:var(--trypan)}
+.toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translate(-50%,20px);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:999px;font-weight:600;font-size:14px;opacity:0;transition:.2s;pointer-events:none}
+.toast.show{opacity:1;transform:translate(-50%,0)}
+.fallback{width:100%;min-height:120px;margin-top:10px;font-family:var(--f-mono);font-size:12px}
+.foot{display:flex;justify-content:center;align-items:center;padding-top:10px;font-size:13px;color:var(--ink-3)}
+.foot .by{display:flex;align-items:center;gap:10px}
+.foot .mark{font-family:var(--f-mono);font-weight:500;font-size:12px;letter-spacing:.08em;padding:4px 8px;border-radius:7px;background:var(--ink);color:var(--bg)}
+.foot a.mark{text-decoration:none}
+.foot a.mark:hover{background:var(--trypan);color:var(--surface)}
+.foot .links{display:flex;gap:16px;flex-wrap:wrap}
+@media (prefers-reduced-motion: reduce){*{transition:none!important}}
+</style>
+
+<main class="wrap">
+  <div class="brand">
+    <svg viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="14.5" fill="var(--surface)" stroke="var(--ink)" stroke-width="2"/><path d="M10 6.5v19M16 4v24M22 6.5v19M6.5 10h19M4 16h24M6.5 22h19" stroke="var(--line-2)" stroke-width="1"/><circle cx="12.6" cy="12.8" r="2.6" fill="var(--surface)" stroke="var(--live)" stroke-width="1.4"/><circle cx="19.3" cy="19.4" r="2.6" fill="var(--trypan)"/></svg>
+    <div><b>OZ Cell Counter</b><span>Hemocytometer photo → cells/mL</span></div>
+  </div>
+
+  <label class="drop" id="drop" for="file-in">
+    <h2 id="drop-title">Take a photo of the hemocytometer</h2>
+    <p>Point your phone at the eyepiece and shoot the whole grid or one large square. Claude counts the cells. The app finds the grid lines and tells them apart from cells. Counting happens on this device.</p>
+    <span class="row" style="justify-content:center"><span class="btn primary">Take photo</span><button class="btn" id="btn-demo" type="button">Try a demo</button></span>
+    <input type="file" id="file-in" accept="image/*" capture="environment" hidden>
+  </label>
+
+  <section class="card" id="result-card" hidden>
+    <div class="result">
+      <div>
+        <div class="eyebrow">Live cells</div>
+        <div class="big" id="r-live">—</div>
+        <div class="unit">cells / mL</div>
+      </div>
+      <div class="stats">
+        <div class="stat"><div class="v" id="r-viab">—</div><div class="k">Viability</div></div>
+        <div class="stat"><div class="v" id="r-yield">—</div><div class="k" id="r-yield-k">Live cells in tube</div></div>
+        <div class="stat live"><div class="v" id="r-l">0</div><div class="k">Live counted</div></div>
+        <div class="stat dead"><div class="v" id="r-d">0</div><div class="k">Dead counted</div></div>
+      </div>
+    </div>
+    <div class="verdict" id="verdict"></div>
+    <div class="row" style="margin-top:16px">
+      <button class="btn primary" id="btn-copy">Copy result</button>
+      <button class="btn" id="btn-reset">Start over</button>
+    </div>
+    <div id="copy-slot"></div>
+  </section>
+
+  <section class="card">
+    <p class="hint" id="ai-state" style="margin:0 0 12px">Checking AI…</p>
+    <div class="settings">
+      <div class="field"><label for="s-dil">Trypan blue mix</label>
+        <select class="in" id="s-dil">
+          <option value="1">No dye (×1)</option>
+          <option value="2" selected>1 : 1 with cells (×2)</option>
+          <option value="5">1 : 4 (×5)</option>
+          <option value="10">1 : 9 (×10)</option>
+        </select></div>
+      <div class="field"><label for="s-vol">Tube volume in mL (optional)</label><input class="in" id="s-vol" inputmode="decimal" value="5"></div>
+    </div>
+    <details style="margin-top:14px">
+      <summary>Count not right?</summary>
+      <div class="field" style="margin-top:12px"><label for="s-sens">Sensitivity</label><input type="range" class="range" id="s-sens" min="-40" max="40" value="0"><span class="hint">Slide right if it misses cells, left if it counts debris.</span></div>
+      <p class="hint" style="margin:10px 0 0">The slider only changes quick counts, not AI counts. Tap a marker to switch live → dead → remove. Tap empty space to add a live cell, shift-tap to add a dead one.</p>
+    </details>
+  </section>
+
+  <section id="photos-wrap" hidden>
+    <div class="photos" id="photos"></div>
+  </section>
+  <footer class="foot"><a class="mark" href="https://o23r.com" target="_blank" rel="noopener" aria-label="Made by Ozer Yilmaz, o23r.com">O23R</a></footer>
+</main>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+(function(){
+'use strict';
+const $=s=>document.querySelector(s);
+const FACTOR=1e4; // Neubauer large square: 1 mm² × 0.1 mm = 0.1 µL
+const imgs=[];
+
+function sciHTML(v){if(!isFinite(v))return '—';if(v<1e4)return Math.round(v).toLocaleString();let e=Math.floor(Math.log10(v)),m=v/10**e;if(+m.toFixed(2)>=10){m/=10;e++}return `${m.toFixed(2)}<span class="x">×</span>10<sup>${e}</sup>`}
+function sciT(v){if(!isFinite(v))return '—';if(v<1e4)return Math.round(v).toLocaleString();let e=Math.floor(Math.log10(v)),m=v/10**e;if(+m.toFixed(2)>=10){m/=10;e++}return `${m.toFixed(2)} × 10^${e}`}
+function shortSci(v){if(!isFinite(v))return '—';if(v>=1e6)return (v/1e6).toFixed(v>=1e7?1:2)+' M';if(v>=1e3)return (v/1e3).toFixed(0)+' k';return Math.round(v)+''}
+let tt;function toast(m){const t=$('#toast');t.textContent=m;t.classList.add('show');clearTimeout(tt);tt=setTimeout(()=>t.classList.remove('show'),1800)}
+
+/* loading */
+function addImage(img,name,blob){
+  const M=1000,sc=Math.min(1,M/Math.max(img.width,img.height)),w=Math.round(img.width*sc),h=Math.round(img.height*sc);
+  const base=document.createElement('canvas');base.width=w;base.height=h;const b=base.getContext('2d',{willReadFrequently:true});b.drawImage(img,0,0,w,h);
+  const rec={name,base,w,h,px:b.getImageData(0,0,w,h).data,items:[],blob,img};
+  detect(rec);imgs.push(rec);queueAI(rec);renderPhotos();update();
+}
+function readFiles(files){
+  const list=[...files].filter(f=>f&&/^image\//.test(f.type));if(!list.length)return toast('Choose image files (JPG or PNG)');
+  list.forEach(f=>{const rd=new FileReader();rd.onload=()=>{const im=new Image();im.onload=()=>addImage(im,f.name||'Photo',f);im.onerror=()=>toast('Could not open '+f.name);im.src=rd.result};rd.readAsDataURL(f)});
+}
+$('#file-in').addEventListener('change',e=>{readFiles(e.target.files);e.target.value=''});
+const drop=$('#drop');
+['dragenter','dragover'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('drag')}));
+['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('drag')}));
+drop.addEventListener('drop',e=>readFiles(e.dataTransfer.files));
+document.addEventListener('paste',e=>{const f=[...(e.clipboardData?.items||[])].filter(i=>i.type.startsWith('image/')).map(i=>i.getAsFile());if(f.length)readFiles(f)});
+
+/* automatic detection: threshold → erase grid lines → blobs → learn cell size → blue stain = dead */
+function detect(rec){
+  const {w,h,px}=rec,n=w*h,g=new Uint8Array(n);
+  for(let i=0,j=0;i<n;i++,j+=4)g[i]=(px[j]*.299+px[j+1]*.587+px[j+2]*.114)|0;
+  // 1. Otsu threshold, nudged by sensitivity
+  const hist=new Array(256).fill(0);for(let i=0;i<n;i++)hist[g[i]]++;
+  let sum=0;for(let i=0;i<256;i++)sum+=i*hist[i];let sB=0,wB=0,best=0,thr=128;
+  for(let t=0;t<256;t++){wB+=hist[t];if(!wB)continue;const wF=n-wB;if(!wF)break;sB+=t*hist[t];const d=wB*wF*(sB/wB-(sum-sB)/wF)**2;if(d>best){best=d;thr=t}}
+  thr=Math.max(1,Math.min(254,thr+ +$('#s-sens').value));
+  let mask=new Uint8Array(n);for(let i=0;i<n;i++)mask[i]=g[i]<thr;
+  // 2. Find grid lines: columns/rows that are dark for most of their length
+  const longCols=[],longRows=[];
+  for(let x=0;x<w;x++){let r=0,m=0;for(let y=0;y<h;y++){if(mask[y*w+x]){r++;if(r>m)m=r}else r=0}if(m>=h*.5)longCols.push(x)}
+  for(let y=0;y<h;y++){let r=0,m=0;for(let x=0;x<w;x++){if(mask[y*w+x]){r++;if(r>m)m=r}else r=0}if(m>=w*.5)longRows.push(y)}
+  const clusters=a=>a.reduce((c,v,i)=>c+(i===0||v-a[i-1]>1?1:0),0);
+  const nLines=clusters(longCols)+clusters(longRows);
+  rec.grid=nLines;
+  // 3. If there are grid lines, erode the mask just enough to erase them; cells keep a core
+  let k=0;
+  if(nLines>=2){
+    const rh=new Array(16).fill(0);
+    const addRun=r=>{if(r>0&&r<16)rh[r]++};
+    for(let x=0;x<w;x+=2){let r=0;for(let y=0;y<h;y++){if(mask[y*w+x])r++;else{addRun(r);r=0}}}
+    for(let y=0;y<h;y+=2){let r=0;for(let x=0;x<w;x++){if(mask[y*w+x])r++;else{addRun(r);r=0}}}
+    const top=Math.max(...rh.slice(1,11));let t=1;for(let r=1;r<=10;r++)if(rh[r]>=top*.25)t=r;
+    k=Math.ceil((t+1)/2); // window 2k+1 > line thickness
+    const tmp=new Uint8Array(n),er=new Uint8Array(n);
+    for(let y=0;y<h;y++)for(let x=0;x<w;x++){let v=1;for(let d=-k;d<=k&&v;d++){const xx=x+d;if(xx<0||xx>=w||!mask[y*w+xx])v=0}tmp[y*w+x]=v}
+    for(let y=0;y<h;y++)for(let x=0;x<w;x++){let v=1;for(let d=-k;d<=k&&v;d++){const yy=y+d;if(yy<0||yy>=h||!tmp[yy*w+x])v=0}er[y*w+x]=v}
+    mask=er;
+  }
+  // 4. Connected blobs
+  const lab=new Int32Array(n),stack=new Int32Array(n);const comps=[];let id=0;
+  for(let i=0;i<n;i++){if(!mask[i]||lab[i])continue;id++;let sp=0;stack[sp++]=i;lab[i]=id;let a=0,sx=0,sy=0,x0=w,y0=h,x1=0,y1=0,bl=0;
+    while(sp){const p=stack[--sp],x=p%w,y=(p/w)|0;a++;sx+=x;sy+=y;if(x<x0)x0=x;if(x>x1)x1=x;if(y<y0)y0=y;if(y>y1)y1=y;const j=p*4;bl+=px[j+2]-(px[j]+px[j+1])/2;
+      if(x>0&&mask[p-1]&&!lab[p-1]){lab[p-1]=id;stack[sp++]=p-1}if(x<w-1&&mask[p+1]&&!lab[p+1]){lab[p+1]=id;stack[sp++]=p+1}
+      if(y>0&&mask[p-w]&&!lab[p-w]){lab[p-w]=id;stack[sp++]=p-w}if(y<h-1&&mask[p+w]&&!lab[p+w]){lab[p+w]=id;stack[sp++]=p+w}}
+    const bw=x1-x0+1,bh=y1-y0+1,d=Math.max(bw,bh),asp=d/Math.min(bw,bh),fill=a/(bw*bh);
+    if(d<Math.min(w,h)*.2&&asp<=2.6&&fill>=.15)comps.push({x:sx/a,y:sy/a,a,d,blue:bl/a})}
+  // 5. Learn the typical cell size, drop specks and huge blobs, split clumps
+  const cand=comps.filter(c=>c.a>=10).map(c=>c.a).sort((a,b)=>a-b);
+  const typA=cand.length?cand[cand.length>>1]:0;const typD=cand.length?Math.sqrt(typA*4/Math.PI):0;
+  rec.items=[];
+  comps.forEach(c=>{if(!typA||c.a<typA*.35||c.a>typA*12)return;let m=1;if(c.a>typA*1.9&&c.d>typD*1.35)m=Math.min(10,Math.round(c.a/typA));
+    rec.items.push({x:c.x,y:c.y,r:typD/2+k+3,t:c.blue>35?'D':'L',k:m})});
+  rec.typR=Math.max(6,typD/2+k+3);
+  if(rec.sq==null)rec.sq=nLines>=12?9:1; // many lines → whole 3×3 grid
+}
+
+/* ---- AI counting (Claude vision, on the viewer's own Claude account) ---- */
+let AI=null,aiReady=false;const aiQueue=[];let aiBusy=false;
+(async()=>{try{if(window.claude){const s=await window.claude.use('sample');if(s){const l=await s.limits().catch(()=>null);if(l&&l.images)AI=s}}}catch(e){}
+  aiReady=true;{const el=document.getElementById('ai-state');if(el)el.textContent=AI?'AI counting is on: Claude counts each photo in 4 sections (about a minute per photo).':'AI counting is not available in this view, so photos get the quick count only. Open the page in the Claude app or claude.ai while signed in.'}imgs.forEach(r=>{if(r.ai==='wait'){if(AI){r.ai='queued';aiQueue.push(r)}else r.ai='off'}});renderPhotos();update();pump()})();
+const RULES=`You are an expert cell-culture technician doing a trypan blue exclusion count on a hemocytometer (Neubauer improved). The photo may be taken with a phone through a microscope eyepiece: expect a dark circular border, uneven light, glare or slight blur.
+- Live cells: round, unstained, clear or bright, often with a bright refractile ring or dark outline.
+- Dead cells: stained blue or dark blue throughout.
+- Ignore debris (irregular shapes, specks much smaller than a cell, fibers), air bubbles (large, perfectly round, thick dark rim, empty inside), dust, scratches, and the grid lines themselves.
+- A cell on or touching a grid line is still one cell. Two touching cells are two cells. Count each cell exactly once.`;
+const TILE_PROMPT=RULES+`
+
+This image is ONE SECTION cut from a larger photo. Scan it systematically, left to right in horizontal bands from top to bottom, and list every cell whose centre is inside this image, including cells cut off at the edges.
+
+Reply with only this JSON:
+{"cells": [{"x": number, "y": number, "s": "L" or "D"}]}
+x and y are the cell centre as fractions (0 to 1) of THIS image's width and height, from the top-left corner. If there are no cells, reply {"cells": []}.`;
+const OVERVIEW_PROMPT=RULES+`
+
+Do not count cells. Only judge the photo:
+- large_squares: how many complete 1 mm x 1 mm large squares of the counting grid are visible (bounded by triple lines; corner squares are divided 4 x 4, the centre square 5 x 5). One large square = 1, the whole 3 x 3 grid = 9, about four = 4.
+- focus: "good", "fair" or "poor".
+- note: one short sentence a lab member should know (blur, glare, clumping, too dense, bubbles), or "" if nothing.
+Reply with only this JSON: {"large_squares": number, "focus": "good"|"fair"|"poor", "note": string}`;
+function cropBlob(img,x0,y0,x1,y1,maxSide){return new Promise(res=>{const W=img.naturalWidth||img.width,H=img.naturalHeight||img.height;const sx=x0*W,sy=y0*H,sw=(x1-x0)*W,sh=(y1-y0)*H;const sc=Math.min(1,maxSide/Math.max(sw,sh));const c=document.createElement('canvas');c.width=Math.round(sw*sc);c.height=Math.round(sh*sc);c.getContext('2d').drawImage(img,sx,sy,sw,sh,0,0,c.width,c.height);c.toBlob(b=>res(b),'image/jpeg',.92)})}
+async function analyze(rec,signal){
+  const N=2,ov=.07,tiles=[];
+  for(let j=0;j<N;j++)for(let i=0;i<N;i++){const cx0=i/N,cx1=(i+1)/N,cy0=j/N,cy1=(j+1)/N;tiles.push({cx0,cx1,cy0,cy1,x0:Math.max(0,cx0-ov),x1:Math.min(1,cx1+ov),y0:Math.max(0,cy0-ov),y1:Math.min(1,cy1+ov)})}
+  rec.prog=0;rec.progN=tiles.length;
+  const tileJobs=tiles.map(async t=>{const b=await cropBlob(rec.img,t.x0,t.y0,t.x1,t.y1,1400);if(signal.aborted)throw {code:'cancelled'};
+    const res=await AI.json(TILE_PROMPT,{images:b,signal,modelTier:'default'});rec.prog++;drawMeta(rec);
+    const out=[];(Array.isArray(res?.cells)?res.cells:[]).forEach(c=>{const fx=+c.x,fy=+c.y;if(!isFinite(fx)||!isFinite(fy))return;
+      const X=t.x0+Math.min(1,Math.max(0,fx))*(t.x1-t.x0),Y=t.y0+Math.min(1,Math.max(0,fy))*(t.y1-t.y0);
+      const inX=X>=t.cx0&&(X<t.cx1||t.cx1===1),inY=Y>=t.cy0&&(Y<t.cy1||t.cy1===1);
+      if(inX&&inY)out.push({X,Y,t:String(c.s).toUpperCase().startsWith('D')?'D':'L'})});return out});
+  const ovJob=cropBlob(rec.img,0,0,1,1,1400).then(b=>AI.json(OVERVIEW_PROMPT,{images:b,signal,modelTier:'quick'})).catch(()=>null);
+  const results=await Promise.allSettled(tileJobs);const bad=results.find(r=>r.status==='rejected');if(bad)throw bad.reason;
+  const ovr=await ovJob;
+  return {cells:results.flatMap(r=>r.value),overview:ovr};
+}
+function pump(){
+  if(aiBusy||!AI)return;const rec=aiQueue.shift();if(!rec)return;
+  if(!imgs.includes(rec))return pump();
+  aiBusy=true;rec.ai='running';rec.ctl=new AbortController();drawMeta(rec);update();
+  analyze(rec,rec.ctl.signal).then(({cells,overview})=>{
+    const r=rec.typR||Math.max(6,rec.w*.012);
+    rec.items=cells.map(c=>({x:c.X*rec.w,y:c.Y*rec.h,r,t:c.t,k:1}));
+    const sq=+overview?.large_squares;if(sq>0&&sq<=25&&!rec.sqUser)rec.sq=Math.round(sq);
+    rec.note=typeof overview?.note==='string'?overview.note.slice(0,160):'';rec.focus=overview?.focus;
+    rec.ai='done';
+  }).catch(e=>{
+    if(e&&e.code==='cancelled'){rec.ai='quick'}
+    else if(e&&['not_granted','sampling_disabled','not_declared','capability_disabled','capability_removed','images_unavailable'].includes(e.code)){AI=null;const el=document.getElementById('ai-state');if(el)el.textContent=e.code==='not_granted'?'AI counting is off because permission was declined. Reload the page to be asked again.':'AI counting is not available for this account, so photos get the quick count only.';imgs.forEach(r=>{if(r.ai==='queued'||r.ai==='running')r.ai='off'});aiQueue.length=0}
+    else{rec.ai='error';rec.err=e&&e.code==='rate_limited'?'Claude usage limit reached. Try again later.':e&&e.code==='image_rejected'?'This photo could not be sent. Try another photo.':'AI count failed ('+(e&&e.code||'error')+').'}
+  }).finally(()=>{rec.ctl?.abort();aiBusy=false;if(imgs.includes(rec)){draw(rec)}update();pump()});
+}
+function queueAI(rec){if(!aiReady){rec.ai='wait';return}if(!AI){rec.ai='off';return}rec.ai='queued';aiQueue.push(rec);pump()}
+
+const cnt=(rec,t)=>rec.items.filter(i=>i.t===t).reduce((a,i)=>a+i.k,0);
+function draw(rec){
+  const c=rec.cv,x=c.getContext('2d');x.drawImage(rec.base,0,0);const s=Math.max(1,rec.w/600);
+  rec.items.forEach(it=>{x.lineWidth=2.2*s;x.beginPath();x.arc(it.x,it.y,it.r,0,7);
+    if(it.t==='L'){x.strokeStyle='#14B8A6';x.stroke()}else{x.fillStyle='rgba(79,93,255,.3)';x.fill();x.strokeStyle='#4F5DFF';x.stroke()}
+    if(it.k>1){x.font=`700 ${13*s}px ui-monospace,monospace`;x.lineWidth=3*s;x.strokeStyle='#000';x.fillStyle='#fff';x.strokeText('×'+it.k,it.x+it.r,it.y-it.r);x.fillText('×'+it.k,it.x+it.r,it.y-it.r)}});
+  drawMeta(rec);
+}
+function drawMeta(rec){
+  if(!rec.meta)return;
+  const busy=rec.ai==='running'||rec.ai==='queued'||rec.ai==='wait';
+  const st={running:`<span class="st run">AI counting… ${rec.prog||0}/${rec.progN||4} sections</span>`,queued:'<span class="st run">Waiting for AI…</span>',wait:'<span class="st run">Starting AI…</span>',done:'<span class="st ai">Counted by AI</span>',off:'<span class="st">Quick count (AI not available here)</span>',quick:'<span class="st">Quick count</span>',error:'<span class="st err"></span>'}[rec.ai]||'';
+  rec.meta.innerHTML=`<span class="nm"></span><span>${busy?'<b>…</b>':`<b class="l">${cnt(rec,'L')}</b> live · <b class="d">${cnt(rec,'D')}</b> dead`} · <button class="btn link" data-rm>Remove</button></span>
+  <div class="strow">${st}${rec.ai==='running'?'<button class="btn link" data-stop>Stop</button>':''}${(rec.ai==='error'||rec.ai==='quick')&&AI?'<button class="btn link" data-redo>Count with AI</button>':''}</div>
+  ${rec.ai==='done'&&rec.note?'<div class="note"></div>':''}
+  <select class="in sqsel" aria-label="What this photo shows"><option value="1">Photo shows 1 large square</option><option value="4">Photo shows 4 large squares</option><option value="9">Photo shows whole 3×3 grid</option></select>`;
+  rec.meta.querySelector('.nm').textContent=rec.name.length>22?rec.name.slice(0,20)+'…':rec.name;
+  const er=rec.meta.querySelector('.st.err');if(er)er.textContent=rec.err||'AI count failed.';
+  const nt=rec.meta.querySelector('.note');if(nt)nt.textContent=rec.note;
+  const sel=rec.meta.querySelector('.sqsel');if(![1,4,9].includes(rec.sq)){const o=document.createElement('option');o.value=rec.sq;o.textContent=`Photo shows ${rec.sq} large squares`;sel.append(o)}sel.value=String(rec.sq);sel.onchange=()=>{rec.sq=+sel.value;rec.sqUser=true;update()};
+  rec.meta.querySelector('[data-rm]').onclick=()=>{rec.ctl?.abort();imgs.splice(imgs.indexOf(rec),1);renderPhotos();update()};
+  const sb=rec.meta.querySelector('[data-stop]');if(sb)sb.onclick=()=>rec.ctl?.abort();
+  const rb=rec.meta.querySelector('[data-redo]');if(rb)rb.onclick=()=>{rec.ai='queued';aiQueue.push(rec);drawMeta(rec);update();pump()};
+}
+function renderPhotos(){
+  const wrap=$('#photos');wrap.innerHTML='';
+  imgs.forEach(rec=>{const el=document.createElement('div');el.className='photo';const c=document.createElement('canvas');c.width=rec.w;c.height=rec.h;const m=document.createElement('div');m.className='meta';el.append(c,m);if(['running','queued','wait'].includes(rec.ai))el.classList.add('busy');wrap.append(el);rec.cv=c;rec.meta=m;
+    c.addEventListener('pointerdown',e=>{const rc=c.getBoundingClientRect(),px=(e.clientX-rc.left)/rc.width*rec.w,py=(e.clientY-rc.top)/rc.height*rec.h;
+      let hit=-1,hd=1e9;rec.items.forEach((it,i)=>{const d=Math.hypot(it.x-px,it.y-py);if(d<it.r+4&&d<hd){hd=d;hit=i}});
+      if(hit>=0){const it=rec.items[hit];if(it.t==='L')it.t='D';else rec.items.splice(hit,1)}else rec.items.push({x:px,y:py,r:rec.typR||10,t:e.shiftKey?'D':'L',k:1});
+      draw(rec);update()});
+    draw(rec)});
+  $('#photos-wrap').hidden=!imgs.length;
+  drop.classList.toggle('small',imgs.length>0);
+  $('#drop-title').textContent=imgs.length?`Take another photo (${imgs.length} so far)`:'Take a photo of the hemocytometer';
+}
+
+let R={};
+function update(){
+  const card=$('#result-card');if(!imgs.length){card.hidden=true;return}card.hidden=false;
+  const L=imgs.reduce((a,r)=>a+cnt(r,'L'),0),D=imgs.reduce((a,r)=>a+cnt(r,'D'),0),n=imgs.reduce((a,r)=>a+r.sq,0);
+  const df=+$('#s-dil').value,vol=parseFloat($('#s-vol').value);
+  const live=L/n*df*FACTOR,viab=L+D?L/(L+D):NaN,yld=isFinite(vol)&&vol>0?live*vol:NaN;
+  R={L,D,n,df,live,viab,yld,vol};
+  $('#r-live').innerHTML=sciHTML(live);$('#r-viab').textContent=isFinite(viab)?(viab*100).toFixed(1)+'%':'—';
+  $('#r-yield').textContent=shortSci(yld);$('#r-yield-k').textContent=isFinite(vol)&&vol>0?`Live cells in ${vol} mL`:'Live cells in tube';
+  $('#r-l').textContent=L;$('#r-d').textContent=D;
+  const per=(L+D)/n,v=$('#verdict');let cls='ok',msg;
+  const pend=imgs.filter(r=>['running','queued','wait'].includes(r.ai)).length;
+  if(pend){cls='warn';msg=`AI is counting ${pend} photo${pend>1?'s':''}. This takes up to a minute; the numbers update when it finishes.`}
+  else if(!(L+D)){cls='warn';msg='No cells found. Check that the photo is in focus, or raise the sensitivity.'}
+  else if(isFinite(viab)&&viab<.8){cls='bad';msg=`Viability is low (${(viab*100).toFixed(0)}%). Check the cells before using them.`}
+  else if(per<20){cls='warn';msg=`Few cells per square (${per.toFixed(0)}). Add more squares or concentrate the sample for a reliable number.`}
+  else if(per>150){cls='warn';msg=`Very crowded (${per.toFixed(0)} per square). Dilute the sample and take new photos.`}
+  else if(n<4){cls='warn';msg=`Good count. Add ${4-n} more square${4-n>1?'s':''} for a more reliable average.`}
+  else if(L+D<100){cls='warn';msg=`Only ${L+D} cells counted in total. Add more photos so at least 100 cells are counted.`}
+  else msg=`Looks good: ${n} squares counted, ${per.toFixed(0)} cells per square, viability ${(viab*100).toFixed(0)}%.`;
+  v.className='verdict '+cls;v.textContent=msg;
+}
+$('#s-dil').addEventListener('change',update);$('#s-vol').addEventListener('input',update);
+$('#s-sens').addEventListener('input',()=>{imgs.forEach(r=>{if(r.ai!=='done'&&r.ai!=='running'){detect(r);draw(r)}});update()});
+$('#btn-reset').addEventListener('click',()=>{imgs.length=0;renderPhotos();update()});
+$('#btn-copy').addEventListener('click',()=>{
+  const t=`Live cells: ${sciT(R.live)} cells/mL\nViability: ${isFinite(R.viab)?(R.viab*100).toFixed(1)+'%':'—'}\n${isFinite(R.yld)?`Live cells in ${R.vol} mL: ${sciT(R.yld)}\n`:''}Counted ${R.L} live / ${R.D} dead over ${R.n} square${R.n>1?'s':''}, dilution ×${R.df}\nOZ Cell Counter · ${new Date().toLocaleString()}`;
+  const fb=()=>{$('#copy-slot').innerHTML='<textarea class="in fallback" readonly></textarea>';const ta=$('#copy-slot textarea');ta.value=t;ta.select()};
+  try{navigator.clipboard.writeText(t).then(()=>{toast('Copied');$('#copy-slot').innerHTML=''},fb)}catch(e){fb()}
+});
+
+/* demo: synthetic hemocytometer squares */
+function demoImage(seed){
+  let s=seed;const r=()=>{s=(s*16807)%2147483647;return s/2147483647};
+  const W=960,H=720,c=document.createElement('canvas');c.width=W;c.height=H;const x=c.getContext('2d');
+  const bg=x.createRadialGradient(W/2,H/2,100,W/2,H/2,W*.7);bg.addColorStop(0,'#e1e5e8');bg.addColorStop(1,'#bfc5cb');x.fillStyle=bg;x.fillRect(0,0,W,H);
+  x.strokeStyle='rgba(90,96,106,.5)';x.lineWidth=1.4;for(let k=30;k<=W;k+=180){x.beginPath();x.moveTo(k,0);x.lineTo(k,H);x.stroke()}for(let k=30;k<=H;k+=180){x.beginPath();x.moveTo(0,k);x.lineTo(W,k);x.stroke()}
+  const placed=[];const place=rad=>{for(let t=0;t<60;t++){const p={x:30+r()*(W-60),y:30+r()*(H-60),r:rad};if(placed.every(o=>Math.hypot(o.x-p.x,o.y-p.y)>o.r+rad+6)){placed.push(p);return p}}return null};
+  const nl=38+Math.floor(r()*10);for(let i=0;i<nl;i++){const rad=8+r()*3.5,p=place(rad);if(!p)continue;const gr=x.createRadialGradient(p.x-2,p.y-2,1,p.x,p.y,rad);gr.addColorStop(0,'#fbfdfd');gr.addColorStop(.75,'#e8eeef');gr.addColorStop(1,'#c7cfd2');x.fillStyle=gr;x.beginPath();x.arc(p.x,p.y,rad,0,7);x.fill();x.strokeStyle='rgb(46,54,62)';x.lineWidth=2.6;x.stroke()}
+  const nd=3+Math.floor(r()*3);for(let i=0;i<nd;i++){const rad=8+r()*2.5,p=place(rad);if(!p)continue;const gr=x.createRadialGradient(p.x-2,p.y-2,1,p.x,p.y,rad);gr.addColorStop(0,'#5b6cc4');gr.addColorStop(1,'#283a96');x.fillStyle=gr;x.beginPath();x.arc(p.x,p.y,rad,0,7);x.fill()}
+  for(let i=0;i<40;i++){x.fillStyle='rgba(60,64,70,.7)';x.beginPath();x.arc(r()*W,r()*H,.8+r()*1.4,0,7);x.fill()}
+  const id=x.getImageData(0,0,W,H),d=id.data;for(let i=0;i<d.length;i+=4){const q=(r()-.5)*14;d[i]+=q;d[i+1]+=q;d[i+2]+=q}x.putImageData(id,0,0);
+  return c;
+}
+$('#btn-demo').addEventListener('click',e=>{e.preventDefault();e.stopPropagation();
+  ['Top-left','Top-right','Bottom-left','Bottom-right'].forEach((nm,i)=>{demoImage(7+i*991).toBlob(b=>{if(!b)return;const im=new Image();im.onload=()=>addImage(im,`Demo · ${nm}`,b);im.src=URL.createObjectURL(b)},'image/jpeg',.9)})});
+})();
+</script>
+
+</body></html>
